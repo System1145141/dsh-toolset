@@ -3,17 +3,20 @@ import assert from 'node:assert/strict';
 
 import { DEFAULT_FEATURES, FEATURE_IDS, normalizeFeatures } from '../lib/features.js';
 
-test('feature ids include both shipped features', () => {
-  assert.deepEqual(FEATURE_IDS, ['request-status', 'safe-restart']);
-  assert.equal(DEFAULT_FEATURES['request-status'], true);
-  assert.equal(DEFAULT_FEATURES['safe-restart'], true);
+const DEFAULTS = { 'request-status': true, 'safe-restart': true, rewind: true, 'prompt-tuning': true };
+
+test('feature ids include every shipped feature', () => {
+  assert.deepEqual(FEATURE_IDS, ['request-status', 'safe-restart', 'rewind', 'prompt-tuning']);
+  for (const id of FEATURE_IDS) assert.equal(DEFAULT_FEATURES[id], true);
 });
 
 test('normalizeFeatures fills defaults and drops unknown/non-boolean values', () => {
-  assert.deepEqual(normalizeFeatures(undefined), { 'request-status': true, 'safe-restart': true });
-  assert.deepEqual(normalizeFeatures(null), { 'request-status': true, 'safe-restart': true });
-  assert.deepEqual(normalizeFeatures({ 'request-status': false }), { 'request-status': false, 'safe-restart': true });
-  assert.deepEqual(normalizeFeatures({ 'safe-restart': false, unknown: true }), { 'request-status': true, 'safe-restart': false });
-  assert.deepEqual(normalizeFeatures({ 'safe-restart': 'no' }), { 'request-status': true, 'safe-restart': true });
-  assert.deepEqual(normalizeFeatures([]), { 'request-status': true, 'safe-restart': true });
+  assert.deepEqual(normalizeFeatures(undefined), DEFAULTS);
+  assert.deepEqual(normalizeFeatures(null), DEFAULTS);
+  assert.deepEqual(normalizeFeatures({ 'request-status': false }), { ...DEFAULTS, 'request-status': false });
+  assert.deepEqual(normalizeFeatures({ 'safe-restart': false, unknown: true }), { ...DEFAULTS, 'safe-restart': false });
+  assert.deepEqual(normalizeFeatures({ rewind: false }), { ...DEFAULTS, rewind: false });
+  assert.deepEqual(normalizeFeatures({ 'prompt-tuning': false }), { ...DEFAULTS, 'prompt-tuning': false });
+  assert.deepEqual(normalizeFeatures({ 'safe-restart': 'no' }), DEFAULTS);
+  assert.deepEqual(normalizeFeatures([]), DEFAULTS);
 });

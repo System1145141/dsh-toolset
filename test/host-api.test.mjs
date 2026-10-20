@@ -119,6 +119,15 @@ test('features.get reports both features and the Host capability', async () => {
   assert.equal(envelope.value.features['request-status'], true);
   assert.equal(envelope.value.features['safe-restart'], true);
   assert.equal(envelope.value.capabilities.safeRestart, true);
+  assert.equal(envelope.value.capabilities.promptTuning, false, 'no agent-preset registry in this fake Host');
+});
+
+test('prompt-tuning methods explain why they are unavailable without a registry', async () => {
+  const response = await post(route, '{}', 'application/json', 'prompt-tuning.get');
+  assert.equal(response.status, 400);
+  const envelope = JSON.parse(response.body);
+  assert.equal(envelope.ok, false);
+  assert.match(envelope.error.message, /agent-preset registry|profile patch/u);
 });
 
 test('disabling and re-enabling safe-restart reconciles the tool registration', async () => {

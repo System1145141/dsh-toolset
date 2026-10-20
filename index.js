@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DEFAULT_FEATURES, FEATURE_IDS, normalizeFeatures } from './lib/features.js';
+import { createPromptTuning } from './lib/prompt-tuning.js';
 import { createRestartController, isRestartSupported } from './lib/restart.js';
 import { readArmedMarker, resumeAfterRestart } from './lib/resume.js';
 import { createSafeRestartTool } from './lib/tool.js';
@@ -163,18 +164,23 @@ function readJsonBody(req) {
 }
 
 /** The Host capability block shared by both API methods. */
-function capabilities() {
-  return { safeRestart: restartSupported() };
+function capabilities(ctx) {
+  return {
+    safeRestart: restartSupported(),
+    // Prompt tuning writes Agent presets through the registry and the profile
+    // patch; deployments without either surface cannot use it.
+    promptTuning: Boolean(ctx?.get?.('agentPresets') && ctx?.get?.('profileContext')),
+  };
 }
 
 /** `features.get` — read the accepted switch values and Host capabilities. */
-async function featuresGet() {
+async function featuresGet(payload, ctx) {
   await loadState();
-  return { features: state.features, capabilities: capabilities() };
+  return { features: state.features, capabilities: capabilities(ctx) };
 }
 
 /** `features.set` — flip one switch, persist it, and reconcile Host features. */
-async function featuresSet(payload) {
+async function featuresSet(payload, ctx) {
   const id = typeof payload?.id === 'string' ? payload.id : '';
   if (!FEATURE_IDS.includes(id)) throw new Error(`unknown feature "${id}"`);
   if (typeof payload?.enabled !== 'boolean') throw new Error('"enabled" must be a boolean');
@@ -182,16 +188,65 @@ async function featuresSet(payload) {
   state = { features: { ...state.features, [id]: payload.enabled } };
   await persistState();
   publishFeatureChange();
-  return { features: state.features, capabilities: capabilities() };
+  return { features: state.features, capabilities: capabilities(ctx) };
+}
+
+/** Resolve the Host services prompt tuning needs, or explain why it cannot run. */
+function promptTuningController(ctx) {
+  const agentPresets = ctx?.get?.('agentPresets');
+  const profileContext = ctx?.get?.('profileContext');
+  if (agentPresets === undefined || profileContext === undefined || typeof profileContext.patchPath !== 'string') {
+    throw new Error('this deployment has no agent-preset registry or profile patch');
+  }
+  const hmr = ctx?.get?.('hmr');
+  return createPromptTuning({
+    agentPresets,
+    patchPath: profileContext.patchPath,
+    hmr: hmr !== undefined && typeof hmr.reconcileProfile === 'function' && typeof hmr.runExclusive === 'function' ? hmr : undefined,
+    log,
+  });
+}
+
+/** Refuse prompt-tuning calls while the feature switch is off. */
+function requirePromptTuning() {
+  if (!featureEnabled('prompt-tuning')) throw new Error('the prompt-tuning feature is disabled');
+}
+
+/** `prompt-tuning.get` — roster plus the presets this feature manages. */
+async function promptTuningGet(payload, ctx) {
+  requirePromptTuning();
+  return promptTuningController(ctx).list();
+}
+
+/** `prompt-tuning.base` — the editable persona of one base preset. */
+async function promptTuningBase(payload, ctx) {
+  requirePromptTuning();
+  return promptTuningController(ctx).base(payload?.presetId);
+}
+
+/** `prompt-tuning.save` — create or update one managed preset. */
+async function promptTuningSave(payload, ctx) {
+  requirePromptTuning();
+  return promptTuningController(ctx).save(payload ?? {});
+}
+
+/** `prompt-tuning.delete` — remove one managed preset. */
+async function promptTuningDelete(payload, ctx) {
+  requirePromptTuning();
+  return promptTuningController(ctx).remove(payload?.presetId);
 }
 
 const METHODS = {
   'features.get': featuresGet,
   'features.set': featuresSet,
+  'prompt-tuning.get': promptTuningGet,
+  'prompt-tuning.base': promptTuningBase,
+  'prompt-tuning.save': promptTuningSave,
+  'prompt-tuning.delete': promptTuningDelete,
 };
 
 /** Serve one `/plugins/dsh-toolset/api/<method>` request. */
-async function handleRequest(req, res) {
+async function handleRequest(req, res, ctx) {
   if (req.method !== 'POST') {
     replyJson(res, 405, { ok: false, error: { code: 'method', message: 'POST required' } });
     return;
@@ -212,7 +267,7 @@ async function handleRequest(req, res) {
   }
   try {
     const payload = await readJsonBody(req);
-    replyJson(res, 200, { ok: true, value: await handler(payload) });
+    replyJson(res, 200, { ok: true, value: await handler(payload, ctx) });
   } catch (error) {
     replyJson(res, 400, {
       ok: false,
@@ -228,7 +283,7 @@ async function handleRequest(req, res) {
 function installApi(ctx) {
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(
-      () => webCtx.webServer.register({ kind: 'prefix', path: API_PREFIX, handler: handleRequest }),
+      () => webCtx.webServer.register({ kind: 'prefix', path: API_PREFIX, handler: (req, res) => handleRequest(req, res, webCtx) }),
       'dsh-toolset: feature API route',
     );
   });
