@@ -1,0 +1,45 @@
+{
+  "name": "@local/dsh-toolset",
+  "version": "0.2.0",
+  "private": true,
+  "description": "DeepSeek Harness toolset: several small, independently switchable features. Features: live request status in the composer status line; dsh_safe_restart (safe Host restart with automatic session resume).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/System1145141/dsh-toolset.git"
+  },
+  "homepage": "https://github.com/System1145141/dsh-toolset",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "restart-helper.ps1",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "docs/*.png",
+    "LICENSE",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

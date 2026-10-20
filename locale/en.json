@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Toolset",
+    "description": "One plugin bundling several small features, each with its own switch. Feature 1: a live request status line under the composer (ready / requesting / waiting for reply / thinking / waiting for tools / writing / error). Feature 2: the dsh_safe_restart tool, which restarts DeepSeek Harness after agents and jobs are idle and then resumes the session automatically."
+  }
+}

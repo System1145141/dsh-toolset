@@ -1,0 +1,6 @@
+# dsh-toolset: one bundle row owning every small feature.
+# Features are switched per-feature from Settings → Toolset (stored by the
+# Host half in ./state.json); this row itself is normally left enabled.
+- insert:
+    - id: dsh-toolset
+      name: '@local/dsh-toolset'
