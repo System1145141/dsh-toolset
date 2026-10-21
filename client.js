@@ -22,11 +22,13 @@ window.__ModuleLoader__.load({
     const FEATURE_SAFE_RESTART = 'safe-restart';
     const FEATURE_REWIND = 'rewind';
     const FEATURE_PROMPT_TUNING = 'prompt-tuning';
+    const FEATURE_ASK_MODEL = 'ask-model';
     const DEFAULT_FEATURES = {
       [FEATURE_REQUEST_STATUS]: true,
       [FEATURE_SAFE_RESTART]: true,
       [FEATURE_REWIND]: true,
       [FEATURE_PROMPT_TUNING]: true,
+      [FEATURE_ASK_MODEL]: true,
     };
     const FEATURES = [
       {
@@ -48,6 +50,11 @@ window.__ModuleLoader__.load({
         id: FEATURE_PROMPT_TUNING,
         titleKey: 'feature.promptTuning.title',
         descriptionKey: 'feature.promptTuning.description',
+      },
+      {
+        id: FEATURE_ASK_MODEL,
+        titleKey: 'feature.askModel.title',
+        descriptionKey: 'feature.askModel.description',
       },
     ];
 
@@ -98,6 +105,52 @@ window.__ModuleLoader__.load({
       'prompt.empty': 'No presets created here yet.',
       'prompt.defaultName': '{base} (tuned)',
       'prompt.baseMissing': 'The base preset list is empty.',
+      'feature.askModel.title': 'Ask a model',
+      'feature.askModel.description': 'Adds the ask_model tool: the Agent can ask a separate chat model (local or cloud) a question and attach files or images. Configure the connections below; the small model is a plain chat, not an Agent.',
+      'ask.title': 'Ask a model',
+      'ask.intro': 'Configure local or cloud OpenAI-compatible chat endpoints. The ask_model tool calls one of them directly: a plain chat completion with no tools, no agent loop, and no session. API keys are stored in the Host credential store, never in the plugin state.',
+      'ask.empty': 'No connection configured yet.',
+      'ask.add': 'New connection',
+      'ask.formNew': 'New connection',
+      'ask.formEdit': 'Editing "{name}"',
+      'ask.edit': 'Edit',
+      'ask.test': 'Test',
+      'ask.testing': 'Testing…',
+      'ask.setDefault': 'Use as default',
+      'ask.defaultBadge': 'default',
+      'ask.localBadge': 'local',
+      'ask.keySet': 'key saved',
+      'ask.keyMissing': 'no key',
+      'ask.name': 'Name',
+      'ask.namePlaceholder': 'Local Ollama',
+      'ask.baseURL': 'Base URL',
+      'ask.baseURLPlaceholder': 'http://127.0.0.1:11434/v1',
+      'ask.baseURLHint': 'OpenAI-compatible base URL; the tool appends /chat/completions.',
+      'ask.model': 'Model',
+      'ask.modelPlaceholder': 'qwen2.5:3b',
+      'ask.apiKey': 'API key',
+      'ask.apiKeyKeep': 'saved — leave empty to keep it',
+      'ask.apiKeyOptional': 'optional; local servers often need none',
+      'ask.clearKey': 'Remove the saved API key',
+      'ask.timeout': 'Timeout (ms)',
+      'ask.maxTokens': 'Max tokens (optional)',
+      'ask.temperature': 'Temperature (optional)',
+      'ask.vision': 'The model accepts images',
+      'ask.save': 'Save connection',
+      'ask.saving': 'Saving…',
+      'ask.cancel': 'Cancel',
+      'ask.saved': 'Saved connection "{name}".',
+      'ask.deleted': 'Deleted connection "{name}".',
+      'ask.defaultSet': '"{name}" is now the default connection.',
+      'ask.testOk': '"{name}" replied in {ms} ms: {reply}',
+      'ask.testFailed': 'Test failed: {message}',
+      'ask.loadFailed': 'Could not load connections: {message}',
+      'ask.saveFailed': 'Could not save: {message}',
+      'ask.deleteFailed': 'Could not delete: {message}',
+      'ask.deleteConfirm': 'Delete the connection "{name}"? Its saved API key is removed too.',
+      'ask.secureUnavailable': 'This deployment has no credential store, so API keys cannot be saved; keyless local endpoints still work.',
+      'ask.loading': 'Loading connections…',
+      'ask.unavailable': 'This deployment cannot run the ask_model tool.',
       'rewind.label': 'Rewind',
       'rewind.copy': 'Copy',
       'rewind.copied': 'Copied',
@@ -166,6 +219,52 @@ window.__ModuleLoader__.load({
       'prompt.empty': '还没有在这里创建过预设。',
       'prompt.defaultName': '{base}（微调）',
       'prompt.baseMissing': '基础预设列表为空。',
+      'feature.askModel.title': '向模型提问',
+      'feature.askModel.description': '提供 ask_model 工具：Agent 可以向另一个聊天模型（本地或云端）提问，并携带文件或图片附件。在下方配置连接；小模型是纯聊天，不是 Agent。',
+      'ask.title': '向模型提问',
+      'ask.intro': '配置本地或云端的 OpenAI 兼容聊天接口。ask_model 工具会直接调用其中一个：一次纯聊天补全，没有工具、没有智能体循环、不写入会话。API Key 保存在 Host 的凭据库中，不会写进插件状态文件。',
+      'ask.empty': '还没有配置连接。',
+      'ask.add': '新增连接',
+      'ask.formNew': '新增连接',
+      'ask.formEdit': '正在编辑「{name}」',
+      'ask.edit': '编辑',
+      'ask.test': '测试',
+      'ask.testing': '测试中…',
+      'ask.setDefault': '设为默认',
+      'ask.defaultBadge': '默认',
+      'ask.localBadge': '本地',
+      'ask.keySet': '已保存 Key',
+      'ask.keyMissing': '未保存 Key',
+      'ask.name': '名称',
+      'ask.namePlaceholder': '本地 Ollama',
+      'ask.baseURL': 'Base URL',
+      'ask.baseURLPlaceholder': 'http://127.0.0.1:11434/v1',
+      'ask.baseURLHint': 'OpenAI 兼容的基础地址；工具会自动拼接 /chat/completions。',
+      'ask.model': '模型',
+      'ask.modelPlaceholder': 'qwen2.5:3b',
+      'ask.apiKey': 'API Key',
+      'ask.apiKeyKeep': '已保存，留空表示不修改',
+      'ask.apiKeyOptional': '可留空，本地服务通常不需要',
+      'ask.clearKey': '清除已保存的 API Key',
+      'ask.timeout': '超时（毫秒）',
+      'ask.maxTokens': '最大 tokens（可选）',
+      'ask.temperature': '温度（可选）',
+      'ask.vision': '该模型支持图片',
+      'ask.save': '保存连接',
+      'ask.saving': '保存中…',
+      'ask.cancel': '取消',
+      'ask.saved': '已保存连接「{name}」。',
+      'ask.deleted': '已删除连接「{name}」。',
+      'ask.defaultSet': '「{name}」现在是默认连接。',
+      'ask.testOk': '「{name}」在 {ms} ms 内回复：{reply}',
+      'ask.testFailed': '测试失败：{message}',
+      'ask.loadFailed': '连接加载失败：{message}',
+      'ask.saveFailed': '保存失败：{message}',
+      'ask.deleteFailed': '删除失败：{message}',
+      'ask.deleteConfirm': '删除连接「{name}」？它保存的 API Key 也会一并删除。',
+      'ask.secureUnavailable': '当前部署没有凭据库，无法保存 API Key；不需要 Key 的本地接口仍可使用。',
+      'ask.loading': '正在加载连接…',
+      'ask.unavailable': '当前部署无法使用 ask_model 工具。',
       'rewind.label': '撤回',
       'rewind.copy': '复制',
       'rewind.copied': '已复制',
@@ -191,7 +290,7 @@ window.__ModuleLoader__.load({
 
     // ── feature store (Host-backed; defaults keep the UI usable offline) ──────
     let features = { ...DEFAULT_FEATURES };
-    let capabilities = { safeRestart: true, promptTuning: false };
+    let capabilities = { safeRestart: true, promptTuning: false, askModel: true, askModelSecureStorage: false };
     let loaded = false;
     const listeners = new Set();
 
@@ -208,6 +307,8 @@ window.__ModuleLoader__.load({
       return {
         safeRestart: value?.safeRestart !== false,
         promptTuning: value?.promptTuning === true,
+        askModel: value?.askModel === true,
+        askModelSecureStorage: value?.askModelSecureStorage === true,
       };
     }
 
@@ -437,6 +538,17 @@ window.__ModuleLoader__.load({
 .${PREFIX}-miniBtn{box-sizing:border-box;height:26px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,var(--dsw-alias-border-l1));border-radius:var(--dsw-radius-sm,8px);background:0 0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:16px;cursor:pointer}
 .${PREFIX}-miniBtn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .${PREFIX}-miniBtn:disabled{opacity:.5;cursor:default}
+.${PREFIX}-connList{border-top:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column}
+.${PREFIX}-connRow{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--dsw-alias-border-l1)}
+.${PREFIX}-connRow:first-of-type{border-top:0}
+.${PREFIX}-connText{display:flex;flex-direction:column;min-width:0;flex:1;gap:1px}
+.${PREFIX}-connName{color:var(--dsw-alias-label-primary);font-size:13px;line-height:18px;display:flex;align-items:center;gap:6px;min-width:0}
+.${PREFIX}-connMeta{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Consolas,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.${PREFIX}-badge{flex:none;padding:0 6px;border-radius:999px;background:var(--dsw-alias-bg-module-platform,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:16px}
+.${PREFIX}-badgeDefault{background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-switch-thumb,#fff)}
+.${PREFIX}-formGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.${PREFIX}-formGrid > .full{grid-column:1/-1}
+@media (max-width:560px){.${PREFIX}-formGrid{grid-template-columns:1fr}}
 @media (hover:hover){[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]) .${PREFIX}-userActions{opacity:0;transition:opacity 80ms}[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]):hover .${PREFIX}-userActions,[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]):focus-within .${PREFIX}-userActions{opacity:1}}
 @media (prefers-reduced-motion:reduce){.${PREFIX}-switch,.${PREFIX}-thumb{transition:none}.${PREFIX}-status[data-running="true"] .${PREFIX}-dot{animation:none}[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]) .${PREFIX}-userActions{transition:none}}
 `;
@@ -650,6 +762,395 @@ window.__ModuleLoader__.load({
     /** Human-readable message from an unknown thrown value. */
     function errorMessage(error) {
       return error instanceof Error ? error.message : String(error);
+    }
+
+    /** Empty connection form values. */
+    function emptyConnectionForm() {
+      return {
+        name: '',
+        baseURL: 'http://127.0.0.1:11434/v1',
+        model: '',
+        apiKey: '',
+        vision: true,
+        timeoutMs: '120000',
+        maxTokens: '',
+        temperature: '',
+        clearApiKey: false,
+      };
+    }
+
+    /**
+     * Settings → Toolset → Ask a model: manage the local/cloud chat endpoints
+     * the `ask_model` tool can call. API keys never come back from the Host.
+     */
+    function AskModelEditor({ t, caps }) {
+      const [roster, setRoster] = React.useState(null);
+      const [loadError, setLoadError] = React.useState(null);
+      const [busy, setBusy] = React.useState(false);
+      const [message, setMessage] = React.useState(null);
+      const [editingId, setEditingId] = React.useState('');
+      const [form, setForm] = React.useState(() => emptyConnectionForm());
+      const [testingId, setTestingId] = React.useState('');
+      const mounted = React.useRef(true);
+
+      React.useEffect(() => {
+        mounted.current = true;
+        void bootstrap();
+        return () => {
+          mounted.current = false;
+        };
+      }, []);
+
+      function setNotice(kind, text) {
+        if (mounted.current) setMessage({ kind, text });
+      }
+
+      function setField(key, value) {
+        setForm((previous) => ({ ...previous, [key]: value }));
+      }
+
+      async function bootstrap() {
+        setBusy(true);
+        setLoadError(null);
+        try {
+          const value = await callApi('ask-model.get', {});
+          if (!mounted.current) return;
+          setRoster(value);
+          if ((value?.connections?.length ?? 0) === 0) setForm(emptyConnectionForm());
+        } catch (error) {
+          if (mounted.current) setLoadError(errorMessage(error));
+        } finally {
+          if (mounted.current) setBusy(false);
+        }
+      }
+
+      async function refresh() {
+        const value = await callApi('ask-model.get', {});
+        if (mounted.current) setRoster(value);
+        return value;
+      }
+
+      function beginAdd() {
+        setEditingId('');
+        setForm(emptyConnectionForm());
+        setMessage(null);
+      }
+
+      function beginEdit(row) {
+        setEditingId(row.id);
+        setForm({
+          name: row.name,
+          baseURL: row.baseURL,
+          model: row.model,
+          apiKey: '',
+          vision: row.vision !== false,
+          timeoutMs: String(row.timeoutMs ?? 120000),
+          maxTokens: row.maxTokens === undefined ? '' : String(row.maxTokens),
+          temperature: row.temperature === undefined ? '' : String(row.temperature),
+          clearApiKey: false,
+        });
+        setMessage(null);
+      }
+
+      async function onSave() {
+        setBusy(true);
+        setMessage(null);
+        try {
+          const payload = {
+            name: form.name.trim(),
+            baseURL: form.baseURL.trim(),
+            model: form.model.trim(),
+            vision: form.vision,
+            timeoutMs: Number(form.timeoutMs),
+          };
+          if (editingId !== '') payload.id = editingId;
+          if (form.apiKey !== '') payload.apiKey = form.apiKey;
+          if (form.clearApiKey === true) payload.clearApiKey = true;
+          if (form.maxTokens.trim() !== '') payload.maxTokens = Number(form.maxTokens);
+          if (form.temperature.trim() !== '') payload.temperature = Number(form.temperature);
+          const value = await callApi('ask-model.save', payload);
+          if (!mounted.current) return;
+          setRoster(value);
+          const saved = (value?.connections ?? []).find((row) => row.name === payload.name);
+          if (saved !== undefined) setEditingId(saved.id);
+          setForm((previous) => ({ ...previous, apiKey: '', clearApiKey: false }));
+          setNotice('ok', t('ask.saved', { name: payload.name }));
+        } catch (error) {
+          setNotice('error', t('ask.saveFailed', { message: errorMessage(error) }));
+        } finally {
+          if (mounted.current) setBusy(false);
+        }
+      }
+
+      async function onDelete(row) {
+        if (!window.confirm(t('ask.deleteConfirm', { name: row.name }))) return;
+        setBusy(true);
+        setMessage(null);
+        try {
+          const value = await callApi('ask-model.delete', { id: row.id });
+          if (!mounted.current) return;
+          setRoster(value);
+          if (editingId === row.id) {
+            setEditingId('');
+            setForm(emptyConnectionForm());
+          }
+          setNotice('ok', t('ask.deleted', { name: row.name }));
+        } catch (error) {
+          setNotice('error', t('ask.deleteFailed', { message: errorMessage(error) }));
+        } finally {
+          if (mounted.current) setBusy(false);
+        }
+      }
+
+      async function onDefault(row) {
+        setBusy(true);
+        setMessage(null);
+        try {
+          const value = await callApi('ask-model.default', { id: row.id });
+          if (!mounted.current) return;
+          setRoster(value);
+          setNotice('ok', t('ask.defaultSet', { name: row.name }));
+        } catch (error) {
+          setNotice('error', t('ask.saveFailed', { message: errorMessage(error) }));
+        } finally {
+          if (mounted.current) setBusy(false);
+        }
+      }
+
+      async function onTest(row) {
+        setTestingId(row.id);
+        setMessage(null);
+        try {
+          const value = await callApi('ask-model.test', { id: row.id });
+          setNotice('ok', t('ask.testOk', { name: row.name, ms: value?.elapsedMs ?? '?', reply: String(value?.reply ?? '').slice(0, 300) }));
+        } catch (error) {
+          setNotice('error', t('ask.testFailed', { message: errorMessage(error) }));
+        } finally {
+          if (mounted.current) setTestingId('');
+        }
+      }
+
+      if (caps.askModel !== true) {
+        return h(
+          'div',
+          { className: `${PREFIX}-card`, 'data-toolset-ask-model': 'unavailable' },
+          h(
+            'div',
+            { className: `${PREFIX}-ptHead` },
+            h('div', { className: `${PREFIX}-title` }, t('ask.title')),
+            h('div', { className: `${PREFIX}-desc` }, t('ask.unavailable')),
+          ),
+        );
+      }
+
+      const head = h(
+        'div',
+        { className: `${PREFIX}-ptHead` },
+        h('div', { className: `${PREFIX}-title` }, t('ask.title')),
+        h('div', { className: `${PREFIX}-desc` }, t('ask.intro')),
+      );
+
+      if (loadError !== null) {
+        return h(
+          'div',
+          { className: `${PREFIX}-card`, 'data-toolset-ask-model': 'error' },
+          head,
+          h(
+            'div',
+            { className: `${PREFIX}-ptBody` },
+            h('div', { className: `${PREFIX}-msgError`, role: 'alert' }, t('ask.loadFailed', { message: loadError })),
+            h('div', { className: `${PREFIX}-actions` }, h('button', { type: 'button', className: `${PREFIX}-btn`, onClick: () => void bootstrap() }, t('ask.title'))),
+          ),
+        );
+      }
+
+      if (roster === null) {
+        return h(
+          'div',
+          { className: `${PREFIX}-card`, 'data-toolset-ask-model': 'loading' },
+          head,
+          h('div', { className: `${PREFIX}-ptBody` }, h('div', { className: `${PREFIX}-note` }, t('ask.loading'))),
+        );
+      }
+
+      const connections = Array.isArray(roster.connections) ? roster.connections : [];
+      const noticeClass = message?.kind === 'ok' ? `${PREFIX}-msgOk` : message?.kind === 'error' ? `${PREFIX}-msgError` : `${PREFIX}-note`;
+      const editing = editingId !== '';
+
+      const connectionList = h(
+        'div',
+        { className: `${PREFIX}-connList` },
+        connections.length === 0
+          ? h('div', { className: `${PREFIX}-connRow` }, h('div', { className: `${PREFIX}-note` }, t('ask.empty')))
+          : connections.map((row) =>
+              h(
+                'div',
+                { key: row.id, className: `${PREFIX}-connRow` },
+                h(
+                  'div',
+                  { className: `${PREFIX}-connText` },
+                  h(
+                    'div',
+                    { className: `${PREFIX}-connName` },
+                    row.name,
+                    row.id === roster.defaultId ? h('span', { className: `${PREFIX}-badge ${PREFIX}-badgeDefault` }, t('ask.defaultBadge')) : null,
+                    row.local === true ? h('span', { className: `${PREFIX}-badge` }, t('ask.localBadge')) : null,
+                    h('span', { className: `${PREFIX}-badge` }, row.apiKeySet === true ? t('ask.keySet') : t('ask.keyMissing')),
+                  ),
+                  h('div', { className: `${PREFIX}-connMeta` }, `${row.model} · ${row.baseURL}`),
+                ),
+                row.id === roster.defaultId
+                  ? null
+                  : h('button', { type: 'button', className: `${PREFIX}-miniBtn`, disabled: busy, onClick: () => void onDefault(row) }, t('ask.setDefault')),
+                h('button', { type: 'button', className: `${PREFIX}-miniBtn`, disabled: busy, onClick: () => void onTest(row) }, testingId === row.id ? t('ask.testing') : t('ask.test')),
+                h('button', { type: 'button', className: `${PREFIX}-miniBtn`, disabled: busy, onClick: () => beginEdit(row) }, t('ask.edit')),
+                h('button', { type: 'button', className: `${PREFIX}-miniBtn ${PREFIX}-btnDanger`, disabled: busy, onClick: () => void onDelete(row) }, t('prompt.delete')),
+              ),
+            ),
+      );
+
+      return h(
+        'div',
+        { className: `${PREFIX}-card`, 'data-toolset-ask-model': 'ready' },
+        head,
+        connectionList,
+        h(
+          'div',
+          { className: `${PREFIX}-ptBody` },
+          h(
+            'div',
+            { className: `${PREFIX}-note` },
+            editing ? t('ask.formEdit', { name: connections.find((row) => row.id === editingId)?.name ?? editingId }) : t('ask.formNew'),
+          ),
+          h(
+            'div',
+            { className: `${PREFIX}-formGrid` },
+            h(
+              'label',
+              { className: `${PREFIX}-field` },
+              h('span', { className: `${PREFIX}-fieldLabel` }, t('ask.name')),
+              h('input', {
+                className: `${PREFIX}-input`,
+                type: 'text',
+                value: form.name,
+                placeholder: t('ask.namePlaceholder'),
+                disabled: busy,
+                maxLength: 60,
+                onChange: (event) => setField('name', event.target.value),
+              }),
+            ),
+            h(
+              'label',
+              { className: `${PREFIX}-field` },
+              h('span', { className: `${PREFIX}-fieldLabel` }, t('ask.model')),
+              h('input', {
+                className: `${PREFIX}-input`,
+                type: 'text',
+                value: form.model,
+                placeholder: t('ask.modelPlaceholder'),
+                disabled: busy,
+                maxLength: 120,
+                onChange: (event) => setField('model', event.target.value),
+              }),
+            ),
+            h(
+              'label',
+              { className: `${PREFIX}-field full` },
+              h('span', { className: `${PREFIX}-fieldLabel` }, t('ask.baseURL')),
+              h('input', {
+                className: `${PREFIX}-input`,
+                type: 'text',
+                value: form.baseURL,
+                placeholder: t('ask.baseURLPlaceholder'),
+                disabled: busy,
+                onChange: (event) => setField('baseURL', event.target.value),
+              }),
+              h('span', { className: `${PREFIX}-note` }, t('ask.baseURLHint')),
+            ),
+            h(
+              'label',
+              { className: `${PREFIX}-field` },
+              h('span', { className: `${PREFIX}-fieldLabel` }, t('ask.apiKey')),
+              h('input', {
+                className: `${PREFIX}-input`,
+                type: 'password',
+                value: form.apiKey,
+                placeholder: editing && connections.find((row) => row.id === editingId)?.apiKeySet === true ? t('ask.apiKeyKeep') : t('ask.apiKeyOptional'),
+                disabled: busy,
+                autoComplete: 'off',
+                onChange: (event) => setField('apiKey', event.target.value),
+              }),
+              editing && connections.find((row) => row.id === editingId)?.apiKeySet === true
+                ? h(
+                    'label',
+                    { className: `${PREFIX}-check` },
+                    h('input', { type: 'checkbox', checked: form.clearApiKey, disabled: busy, onChange: (event) => setField('clearApiKey', event.target.checked) }),
+                    h('span', null, t('ask.clearKey')),
+                  )
+                : null,
+            ),
+            h(
+              'label',
+              { className: `${PREFIX}-field` },
+              h('span', { className: `${PREFIX}-fieldLabel` }, t('ask.timeout')),
+              h('input', {
+                className: `${PREFIX}-input`,
+                type: 'number',
+                min: 1000,
+                max: 600000,
+                step: 1000,
+                value: form.timeoutMs,
+                disabled: busy,
+                onChange: (event) => setField('timeoutMs', event.target.value),
+              }),
+            ),
+            h(
+              'label',
+              { className: `${PREFIX}-field` },
+              h('span', { className: `${PREFIX}-fieldLabel` }, t('ask.maxTokens')),
+              h('input', {
+                className: `${PREFIX}-input`,
+                type: 'number',
+                min: 1,
+                max: 131072,
+                value: form.maxTokens,
+                disabled: busy,
+                onChange: (event) => setField('maxTokens', event.target.value),
+              }),
+            ),
+            h(
+              'label',
+              { className: `${PREFIX}-field` },
+              h('span', { className: `${PREFIX}-fieldLabel` }, t('ask.temperature')),
+              h('input', {
+                className: `${PREFIX}-input`,
+                type: 'number',
+                min: 0,
+                max: 2,
+                step: 0.1,
+                value: form.temperature,
+                disabled: busy,
+                onChange: (event) => setField('temperature', event.target.value),
+              }),
+            ),
+            h(
+              'label',
+              { className: `${PREFIX}-check full` },
+              h('input', { type: 'checkbox', checked: form.vision, disabled: busy, onChange: (event) => setField('vision', event.target.checked) }),
+              h('span', null, t('ask.vision')),
+            ),
+          ),
+          h(
+            'div',
+            { className: `${PREFIX}-actions` },
+            h('button', { type: 'button', className: `${PREFIX}-btn ${PREFIX}-btnPrimary`, disabled: busy, onClick: () => void onSave() }, busy ? t('ask.saving') : t('ask.save')),
+            editing ? h('button', { type: 'button', className: `${PREFIX}-btn`, disabled: busy, onClick: beginAdd }, t('ask.add')) : null,
+            editing ? h('button', { type: 'button', className: `${PREFIX}-btn`, disabled: busy, onClick: () => { setEditingId(''); setForm(emptyConnectionForm()); } }, t('ask.cancel')) : null,
+          ),
+          roster.secureStorage === false ? h('div', { className: `${PREFIX}-note` }, t('ask.secureUnavailable')) : null,
+          message === null ? null : h('div', { className: noticeClass, role: message.kind === 'error' ? 'alert' : undefined }, message.text),
+        ),
+      );
     }
 
     /**
@@ -1051,6 +1552,7 @@ window.__ModuleLoader__.load({
         ),
         error === null ? null : h('p', { className: `${PREFIX}-error`, role: 'alert' }, t('settings.error', { message: error })),
         current[FEATURE_PROMPT_TUNING] !== false ? h(PromptTuningEditor, { key: 'prompt-tuning', t, caps }) : null,
+        current[FEATURE_ASK_MODEL] !== false ? h(AskModelEditor, { key: 'ask-model', t, caps }) : null,
       );
     }
 

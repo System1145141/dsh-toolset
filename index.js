@@ -26,6 +26,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DEFAULT_FEATURES, FEATURE_IDS, normalizeFeatures } from './lib/features.js';
+import {
+  buildMessages,
+  chatCompletion,
+  createAskModelTool,
+  isLocalEndpoint,
+  normalizeAskModelState,
+  normalizeConnection,
+  secretRefFor,
+} from './lib/ask-model.js';
 import { createPromptTuning } from './lib/prompt-tuning.js';
 import { createRestartController, isRestartSupported } from './lib/restart.js';
 import { readArmedMarker, resumeAfterRestart } from './lib/resume.js';
@@ -46,6 +55,10 @@ let state;
 let loadTask;
 /** Host-side feature listeners (tool gating). */
 const featureListeners = new Set();
+/** Host-side ask-model connection listeners (tool description refresh). */
+const askModelListeners = new Set();
+/** Empty ask-model registry. */
+const EMPTY_ASK_MODEL = { connections: [], defaultId: '' };
 
 /** @returns {boolean} whether the safe-restart capability exists in this environment. */
 function restartSupported() {
@@ -74,6 +87,23 @@ function subscribeFeatureChange(listener) {
   return () => featureListeners.delete(listener);
 }
 
+/** Notify Host-side consumers after the ask-model registry changed. */
+function publishAskModelChange() {
+  for (const listener of [...askModelListeners]) {
+    try {
+      listener();
+    } catch {
+      // A broken listener must not break the others.
+    }
+  }
+}
+
+/** Subscribe to ask-model registry changes. @returns {() => void} unsubscribe. */
+function subscribeAskModelChange(listener) {
+  askModelListeners.add(listener);
+  return () => askModelListeners.delete(listener);
+}
+
 function log(message) {
   const line = `[${new Date().toISOString()}] [host] ${message}\n`;
   try {
@@ -87,16 +117,19 @@ function log(message) {
 }
 
 async function loadState() {
-  state ??= { features: { ...DEFAULT_FEATURES } };
+  state ??= { features: { ...DEFAULT_FEATURES }, askModel: { ...EMPTY_ASK_MODEL } };
   if (loadTask !== undefined) return loadTask;
   loadTask = (async () => {
     try {
       const parsed = JSON.parse(await readFile(STATE_PATH, 'utf8'));
-      state = { features: normalizeFeatures(parsed?.features) };
+      state = {
+        features: normalizeFeatures(parsed?.features),
+        askModel: normalizeAskModelState(parsed?.askModel),
+      };
     } catch (error) {
       if (error?.code !== 'ENOENT') {
         // A corrupt state file must not disable the plugin: fall back to defaults.
-        state = { features: { ...DEFAULT_FEATURES } };
+        state = { features: { ...DEFAULT_FEATURES }, askModel: { ...EMPTY_ASK_MODEL } };
       }
     }
     return state;
@@ -170,6 +203,10 @@ function capabilities(ctx) {
     // Prompt tuning writes Agent presets through the registry and the profile
     // patch; deployments without either surface cannot use it.
     promptTuning: Boolean(ctx?.get?.('agentPresets') && ctx?.get?.('profileContext')),
+    // Ask-model itself needs no Host service; API keys use the credential store
+    // when the deployment has one.
+    askModel: true,
+    askModelSecureStorage: ctx?.get?.('credentials') !== undefined,
   };
 }
 
@@ -236,6 +273,146 @@ async function promptTuningDelete(payload, ctx) {
   return promptTuningController(ctx).remove(payload?.presetId);
 }
 
+/** @returns {object} the current ask-model registry. */
+function askModelState() {
+  return state?.askModel ?? EMPTY_ASK_MODEL;
+}
+
+/** Refuse ask-model calls while the feature switch is off. */
+function requireAskModel() {
+  if (!featureEnabled('ask-model')) throw new Error('the ask-model feature is disabled');
+}
+
+/** @returns {Promise<boolean>} whether one connection has a stored API key. */
+async function askModelKeySet(ctx, id) {
+  const credentials = ctx?.get?.('credentials');
+  if (credentials === undefined) return false;
+  try {
+    const info = await credentials.describe(secretRefFor(id));
+    return info?.configured === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Build the settings view: connections without secret values. */
+async function askModelView(ctx) {
+  const current = askModelState();
+  const connections = [];
+  for (const connection of current.connections) {
+    connections.push({
+      ...connection,
+      local: isLocalEndpoint(connection.baseURL),
+      apiKeySet: await askModelKeySet(ctx, connection.id),
+    });
+  }
+  return { connections, defaultId: current.defaultId, secureStorage: ctx?.get?.('credentials') !== undefined };
+}
+
+/** `ask-model.get` — configured connections (never the API key). */
+async function askModelGet(payload, ctx) {
+  requireAskModel();
+  await loadState();
+  return askModelView(ctx);
+}
+
+/** `ask-model.save` — create or update one connection, optionally storing its key. */
+async function askModelSave(payload, ctx) {
+  requireAskModel();
+  await loadState();
+  const input = payload ?? {};
+  const credentials = ctx?.get?.('credentials');
+  const current = askModelState();
+  const existingId = typeof input.id === 'string' ? input.id.trim() : '';
+  const existing = current.connections.find((connection) => connection.id === existingId);
+  const taken = new Set(current.connections.map((connection) => connection.id).filter((id) => id !== existingId));
+  const connection = normalizeConnection({ ...input, id: undefined }, { existingId: existing?.id, taken });
+  if (typeof input.apiKey === 'string' && input.apiKey !== '') {
+    if (credentials === undefined) throw new Error('the credential store is unavailable; this deployment cannot store an API key');
+    await credentials.set(secretRefFor(connection.id), input.apiKey);
+  } else if (input.clearApiKey === true && credentials !== undefined) {
+    await credentials.unset(secretRefFor(connection.id));
+  }
+  const connections = existing === undefined
+    ? [...current.connections, connection]
+    : current.connections.map((row) => (row.id === connection.id ? connection : row));
+  state = {
+    ...state,
+    askModel: {
+      connections,
+      defaultId: current.defaultId === '' ? connection.id : current.defaultId,
+    },
+  };
+  await persistState();
+  publishAskModelChange();
+  return askModelView(ctx);
+}
+
+/** `ask-model.delete` — remove one connection and its stored key. */
+async function askModelDelete(payload, ctx) {
+  requireAskModel();
+  await loadState();
+  const id = String(payload?.id ?? '').trim();
+  const current = askModelState();
+  if (!current.connections.some((connection) => connection.id === id)) throw new Error(`unknown connection "${id}"`);
+  const connections = current.connections.filter((connection) => connection.id !== id);
+  state = {
+    ...state,
+    askModel: {
+      connections,
+      defaultId: current.defaultId === id ? (connections[0]?.id ?? '') : current.defaultId,
+    },
+  };
+  await persistState();
+  const credentials = ctx?.get?.('credentials');
+  if (credentials !== undefined) {
+    try {
+      await credentials.unset(secretRefFor(id));
+    } catch {
+      // The registry entry is gone; an orphaned secret is harmless.
+    }
+  }
+  publishAskModelChange();
+  return askModelView(ctx);
+}
+
+/** `ask-model.default` — choose the connection used when the tool omits one. */
+async function askModelDefault(payload, ctx) {
+  requireAskModel();
+  await loadState();
+  const id = String(payload?.id ?? '').trim();
+  const current = askModelState();
+  if (!current.connections.some((connection) => connection.id === id)) throw new Error(`unknown connection "${id}"`);
+  state = { ...state, askModel: { ...current, defaultId: id } };
+  await persistState();
+  publishAskModelChange();
+  return askModelView(ctx);
+}
+
+/** `ask-model.test` — send one tiny chat request and report the reply. */
+async function askModelTest(payload, ctx) {
+  requireAskModel();
+  await loadState();
+  const id = String(payload?.id ?? '').trim();
+  const connection = askModelState().connections.find((row) => row.id === id);
+  if (connection === undefined) throw new Error(`unknown connection "${id}"`);
+  const credentials = ctx?.get?.('credentials');
+  const hit = credentials === undefined ? undefined : await credentials.resolve(secretRefFor(id));
+  const started = Date.now();
+  const result = await chatCompletion({
+    connection,
+    apiKey: hit?.value,
+    messages: buildMessages({ prompt: 'Reply with exactly: OK' }),
+    timeoutMs: Math.min(connection.timeoutMs, 60000),
+  });
+  return {
+    ok: true,
+    reply: result.text,
+    model: result.model ?? connection.model,
+    elapsedMs: Date.now() - started,
+  };
+}
+
 const METHODS = {
   'features.get': featuresGet,
   'features.set': featuresSet,
@@ -243,6 +420,11 @@ const METHODS = {
   'prompt-tuning.base': promptTuningBase,
   'prompt-tuning.save': promptTuningSave,
   'prompt-tuning.delete': promptTuningDelete,
+  'ask-model.get': askModelGet,
+  'ask-model.save': askModelSave,
+  'ask-model.delete': askModelDelete,
+  'ask-model.default': askModelDefault,
+  'ask-model.test': askModelTest,
 };
 
 /** Serve one `/plugins/dsh-toolset/api/<method>` request. */
@@ -331,6 +513,51 @@ function installSafeRestartTool(ctx) {
 }
 
 /**
+ * Register the `ask_model` tool while the feature is enabled. The tool
+ * description names the configured connections, so a registry change
+ * re-registers it.
+ * @param ctx - Host plugin context.
+ */
+function installAskModelTool(ctx) {
+  ctx.inject(['tools'], (toolCtx) => {
+    let disposeTool = null;
+    let disposed = false;
+    const resolveApiKey = async (connection) => {
+      const credentials = ctx.get('credentials');
+      if (credentials === undefined) return undefined;
+      const hit = await credentials.resolve(secretRefFor(connection.id));
+      return hit?.value;
+    };
+    const sync = () => {
+      if (disposed) return;
+      if (!featureEnabled('ask-model')) {
+        if (disposeTool !== null) {
+          disposeTool();
+          disposeTool = null;
+        }
+        return;
+      }
+      if (disposeTool !== null) disposeTool();
+      disposeTool = toolCtx.tools.register(createAskModelTool({ getConfig: askModelState, resolveApiKey, log }));
+    };
+    toolCtx.effect(() => {
+      sync();
+      const unsubscribeFeature = subscribeFeatureChange(sync);
+      const unsubscribeAskModel = subscribeAskModelChange(sync);
+      return () => {
+        disposed = true;
+        unsubscribeFeature();
+        unsubscribeAskModel();
+        if (disposeTool !== null) {
+          disposeTool();
+          disposeTool = null;
+        }
+      };
+    }, 'dsh-toolset: ask model tool');
+  });
+}
+
+/**
  * After an armed safe restart, resume the recorded Session and queue the
  * continuation message once Host services are available.
  * @param ctx - Host plugin context.
@@ -372,6 +599,7 @@ export function apply(ctx) {
 
   installApi(ctx);
   installSafeRestartTool(ctx);
+  installAskModelTool(ctx);
   installStartupResume(ctx);
 }
 

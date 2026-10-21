@@ -104,11 +104,13 @@ after(async () => {
   else Object.defineProperty(process.versions, 'electron', originalElectron);
 });
 
-test('API route and feature-gated tool are registered', () => {
+test('API route and feature-gated tools are registered', () => {
   assert.ok(route, 'API route registered');
   assert.equal(route.kind, 'prefix');
   assert.ok(tools.has('dsh_safe_restart'), 'safe restart tool registered');
   assert.equal(tools.get('dsh_safe_restart').parameters.type, 'object');
+  assert.ok(tools.has('ask_model'), 'ask_model tool registered');
+  assert.equal(tools.get('ask_model').parameters.required[0], 'prompt');
 });
 
 test('features.get reports both features and the Host capability', async () => {
@@ -120,6 +122,40 @@ test('features.get reports both features and the Host capability', async () => {
   assert.equal(envelope.value.features['safe-restart'], true);
   assert.equal(envelope.value.capabilities.safeRestart, true);
   assert.equal(envelope.value.capabilities.promptTuning, false, 'no agent-preset registry in this fake Host');
+  assert.equal(envelope.value.capabilities.askModel, true);
+  assert.equal(envelope.value.capabilities.askModelSecureStorage, false, 'no credential store in this fake Host');
+});
+
+test('ask-model API stores, exposes and removes a connection', async () => {
+  let response = await post(route, '{}', 'application/json', 'ask-model.get');
+  assert.equal(response.status, 200);
+  let value = JSON.parse(response.body).value;
+  assert.ok(Array.isArray(value.connections), 'connections is an array');
+  assert.equal(value.secureStorage, false);
+  const before = value.connections.length;
+  const initialDefault = value.defaultId;
+
+  response = await post(
+    route,
+    JSON.stringify({ name: 'Local Ollama', baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5:3b' }),
+    'application/json',
+    'ask-model.save',
+  );
+  assert.equal(response.status, 200);
+  value = JSON.parse(response.body).value;
+  assert.equal(value.connections.length, before + 1);
+  const saved = value.connections.find((connection) => connection.id === 'local-ollama');
+  assert.ok(saved, 'saved connection is listed');
+  assert.equal(saved.local, true);
+  assert.equal(saved.apiKeySet, false);
+  assert.equal(value.defaultId, initialDefault === '' ? 'local-ollama' : initialDefault);
+  assert.match(tools.get('ask_model').description, /"local-ollama"/u, 'tool description lists the connection');
+
+  response = await post(route, JSON.stringify({ id: 'local-ollama' }), 'application/json', 'ask-model.delete');
+  assert.equal(response.status, 200);
+  value = JSON.parse(response.body).value;
+  assert.equal(value.connections.some((connection) => connection.id === 'local-ollama'), false);
+  assert.equal(value.connections.length, before);
 });
 
 test('prompt-tuning methods explain why they are unavailable without a registry', async () => {
@@ -138,6 +174,16 @@ test('disabling and re-enabling safe-restart reconciles the tool registration', 
   response = await post(route, JSON.stringify({ id: 'safe-restart', enabled: true }), 'application/json', 'features.set');
   assert.equal(response.status, 200);
   assert.equal(tools.has('dsh_safe_restart'), true, 'tool restored when the feature is on');
+});
+
+test('disabling ask-model removes the tool', async () => {
+  let response = await post(route, JSON.stringify({ id: 'ask-model', enabled: false }), 'application/json', 'features.set');
+  assert.equal(response.status, 200);
+  assert.equal(tools.has('ask_model'), false, 'tool removed when the feature is off');
+
+  response = await post(route, JSON.stringify({ id: 'ask-model', enabled: true }), 'application/json', 'features.set');
+  assert.equal(response.status, 200);
+  assert.equal(tools.has('ask_model'), true, 'tool restored when the feature is on');
 });
 
 test('invalid writes are rejected', async () => {

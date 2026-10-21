@@ -13,6 +13,7 @@ features, each with an independent switch under **Settings → Toolset**.
 | `safe-restart` | The `dsh_safe_restart` tool: restarts the Desktop app after the Host is idle, then resumes the session and continues automatically | on |
 | `rewind` | A rewind action beside Copy on every user message: continue from before that message in a new branch (workspace unchanged; the original session is archived and restorable) | on |
 | `prompt-tuning` | Settings editor that starts from an existing Agent preset, edits its initial system prompt and saves the result as a new preset (live, no restart) | on |
+| `ask-model` | The `ask_model` tool plus a Settings editor for local/cloud OpenAI-compatible chat connections; the Agent can ask that chat model with file and image attachments | on |
 
 ## Layout
 
@@ -22,6 +23,7 @@ features, each with an independent switch under **Settings → Toolset**.
 | `client.js` | Client entry: Settings → Toolset switch page + prompt-tuning editor, request-status pill, user-message rewind action |
 | `lib/features.js` | Feature ids and defaults |
 | `lib/prompt-tuning.js` | Agent-preset persona editing, profile-patch declaration, live HMR apply/rollback |
+| `lib/ask-model.js` | `ask_model` tool, OpenAI-compatible chat client, attachment loading, connection validation |
 | `lib/tool.js` | `dsh_safe_restart` tool definition |
 | `lib/restart.js` | Idle-gated restart scheduler, armed request marker, detached helper launch |
 | `lib/resume.js` | Post-restart session resume + continuation message |
@@ -123,6 +125,36 @@ surgery on the persona row, validates the resulting patch by recomposing, and
 rolls the profile patch back if the new preset fails to activate. Without HMR
 the preset is written and the result reports `restartRequired`.
 
+## Feature 5: ask a model
+
+![Ask a model in Settings → Toolset](docs/ask-model.png)
+
+**Settings → Toolset → Ask a model** manages any number of OpenAI-compatible
+chat endpoints — local (Ollama, LM Studio, llama.cpp, vLLM) or cloud (OpenAI,
+DeepSeek, OpenRouter, …). Each connection has a name, base URL, model, optional
+API key, optional token/temperature caps, and a "supports images" flag. The
+saved key goes to the Host credential store under
+`DSH_TOOLSET_ASK_MODEL_<ID>`; it is never written to `state.json` and never
+returned to the client. The **Test** button sends one tiny request and reports
+the reply and latency.
+
+The feature adds the `ask_model` tool:
+
+| Argument | Meaning |
+| --- | --- |
+| `prompt` (required) | the question or instruction |
+| `system` | optional system instruction for this one request |
+| `connection` | connection id or display name; omit for the default |
+| `attachments` | `{path}` for a workspace file (image → image part, text → inlined) or `{url}` for an http(s) image |
+| `max_tokens`, `temperature` | optional per-call overrides |
+
+It performs exactly one `/chat/completions` request: no tools, no agent loop,
+no session writes. Images become `image_url` parts (base64 data URLs for local
+files); text files are wrapped in `<attachment>` blocks. Attachments are capped
+at 10 MiB each and 20 per call; text is truncated at 512 KiB. The tool's
+description lists the configured connections, so it is re-registered whenever
+the registry changes.
+
 ## Install
 
 The plugin is installed into a Harness profile as a local bundle. From the
@@ -141,6 +173,10 @@ System-prompt tuning writes the presets it creates into the profile's
 `# dsh-toolset preset: <id> (managed by Settings -> Toolset)`. Deleting such a
 preset from the editor removes its block again; the profile patch is otherwise
 left untouched.
+
+Ask-model connections live in `state.json`; their API keys live in the Host
+credential store (`.credentials.yaml`) and are removed when the connection is
+deleted. Connections without a key work as-is for local servers.
 
 ## Development
 
