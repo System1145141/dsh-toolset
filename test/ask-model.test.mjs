@@ -17,7 +17,9 @@ import {
   normalizeAskModelState,
   normalizeConnection,
   resolveConnection,
+  resolveFfmpeg,
   secretRefFor,
+  transcodeAudioToMp3,
 } from '../lib/ask-model.js';
 
 test('normalizeConnection validates fields and derives ids', () => {
@@ -28,6 +30,8 @@ test('normalizeConnection validates fields and derives ids', () => {
     baseURL: 'http://127.0.0.1:11434/v1',
     model: 'qwen2.5:3b',
     vision: true,
+    audio: false,
+    video: false,
     timeoutMs: 120000,
   });
   assert.equal(connection.id, 'local-ollama');
@@ -43,8 +47,10 @@ test('normalizeConnection validates fields and derives ids', () => {
   assert.throws(() => normalizeConnection({ name: 'x', baseURL: 'http://x', model: 'm', temperature: 3 }), /temperature/u);
   assert.throws(() => normalizeConnection({ name: 'x', baseURL: 'http://x', model: 'm', headers: { 'bad header': 'x' } }), /header/u);
 
-  const full = normalizeConnection({ name: 'Cloud', baseURL: 'https://api.example.com/v1', model: 'm', vision: false, maxTokens: 256, temperature: 0.2, headers: { 'x-extra': '1' } });
+  const full = normalizeConnection({ name: 'Cloud', baseURL: 'https://api.example.com/v1', model: 'm', vision: false, audio: true, video: true, maxTokens: 256, temperature: 0.2, headers: { 'x-extra': '1' } });
   assert.equal(full.vision, false);
+  assert.equal(full.audio, true);
+  assert.equal(full.video, true);
   assert.equal(full.maxTokens, 256);
   assert.equal(full.temperature, 0.2);
   assert.deepEqual(full.headers, { 'x-extra': '1' });
@@ -61,6 +67,11 @@ test('endpointFor appends /chat/completions once', () => {
 test('attachment kinds are detected from extensions', () => {
   assert.deepEqual(attachmentKind('a.PNG'), { kind: 'image', mime: 'image/png' });
   assert.deepEqual(attachmentKind('notes.md'), { kind: 'text' });
+  assert.deepEqual(attachmentKind('voice.wav'), { kind: 'audio', format: 'wav', transcode: false });
+  assert.deepEqual(attachmentKind('voice.mp3'), { kind: 'audio', format: 'mp3', transcode: false });
+  assert.deepEqual(attachmentKind('voice.m4a'), { kind: 'audio', format: 'mp3', transcode: true });
+  assert.deepEqual(attachmentKind('clip.mp4'), { kind: 'video', mime: 'video/mp4' });
+  assert.deepEqual(attachmentKind('clip.webm'), { kind: 'video', mime: 'video/webm' });
   assert.deepEqual(attachmentKind('archive.zip'), { kind: undefined });
 });
 
@@ -89,7 +100,64 @@ test('loadAttachments inlines images and text files', async () => {
   }
 });
 
-test('buildMessages emits text or vision parts', () => {
+test('loadAttachments carries audio and video and enforces capabilities', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-toolset-ask-'));
+  try {
+    const mp3 = Buffer.from([0xff, 0xfb, 0x90, 0x00]);
+    await writeFile(join(dir, 'voice.mp3'), mp3);
+    await writeFile(join(dir, 'clip.mp4'), Buffer.from([0x00, 0x00, 0x00, 0x18]));
+    await writeFile(join(dir, 'recording'), Buffer.from([1, 2, 3]));
+    const loaded = await loadAttachments(
+      [{ path: 'voice.mp3' }, { path: 'clip.mp4' }, { path: 'recording', kind: 'video' }],
+      { cwd: dir, capabilities: { vision: true, audio: true, video: true } },
+    );
+    assert.equal(loaded.audios.length, 1);
+    assert.equal(loaded.audios[0].format, 'mp3');
+    assert.equal(loaded.audios[0].data, mp3.toString('base64'));
+    assert.equal(loaded.videos.length, 2);
+    assert.match(loaded.videos[0].url, /^data:video\/mp4;base64,/u);
+    assert.match(loaded.videos[1].url, /^data:video\/mp4;base64,/u);
+    assert.deepEqual(loaded.summary.map((row) => row.kind), ['audio', 'video', 'video']);
+
+    const remote = await loadAttachments([{ url: 'https://example.com/clip.mp4' }], { capabilities: { vision: true, audio: true, video: true } });
+    assert.equal(remote.videos[0].url, 'https://example.com/clip.mp4');
+
+    await assert.rejects(
+      loadAttachments([{ path: 'voice.mp3' }], { cwd: dir, connectionName: 'Local', capabilities: { vision: true, audio: false, video: false } }),
+      /connection "Local" does not accept audio/u,
+    );
+    await assert.rejects(
+      loadAttachments([{ path: 'clip.mp4' }], { cwd: dir, connectionName: 'Local', capabilities: { vision: true, audio: true, video: false } }),
+      /does not accept video/u,
+    );
+    await assert.rejects(loadAttachments([{ url: 'https://example.com/a.mp3' }], { capabilities: { vision: true, audio: true, video: true } }), /local files/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('transcodeAudioToMp3 converts with ffmpeg when available', async (t) => {
+  const ffmpeg = await resolveFfmpeg();
+  if (ffmpeg === undefined) {
+    t.skip('ffmpeg is not available');
+    return;
+  }
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-toolset-ffmpeg-'));
+  try {
+    const { execFile } = await import('node:child_process');
+    const source = join(dir, 'tone.wav');
+    await new Promise((resolve, reject) => {
+      execFile(ffmpeg, ['-nostdin', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.2', '-ac', '1', '-ar', '16000', source], (error) => (error === null ? resolve() : reject(error)));
+    });
+    const mp3 = await transcodeAudioToMp3(source);
+    assert.ok(mp3.length > 100);
+    assert.ok(mp3[0] === 0xff || mp3.subarray(0, 3).toString() === 'ID3');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('buildMessages emits text, vision, audio and video parts', () => {
   const textOnly = buildMessages({ prompt: 'Hello', attachments: { images: [], texts: [{ name: 'a.md', text: 'body' }] } });
   assert.equal(textOnly.length, 1);
   assert.equal(textOnly[0].role, 'user');
@@ -106,6 +174,19 @@ test('buildMessages emits text or vision parts', () => {
   assert.equal(vision[1].content[0].type, 'text');
   assert.equal(vision[1].content[1].type, 'image_url');
   assert.equal(vision[1].content[1].image_url.url, 'data:image/png;base64,AA==');
+
+  const media = buildMessages({
+    prompt: 'What happens?',
+    attachments: {
+      images: [],
+      audios: [{ name: 'a.mp3', format: 'mp3', data: 'QUJD' }],
+      videos: [{ name: 'v.mp4', url: 'data:video/mp4;base64,QQ==' }],
+      texts: [],
+    },
+  });
+  assert.equal(media[0].content[0].type, 'text');
+  assert.deepEqual(media[0].content[1], { type: 'input_audio', input_audio: { data: 'QUJD', format: 'mp3' } });
+  assert.deepEqual(media[0].content[2], { type: 'video_url', video_url: { url: 'data:video/mp4;base64,QQ==' } });
 });
 
 test('chatCompletion parses text, usage and errors', async () => {
@@ -169,8 +250,10 @@ test('the ask_model tool runs one chat call with attachments', async () => {
   try {
     await writeFile(join(dir, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     await writeFile(join(dir, 'doc.txt'), 'some text');
+    await writeFile(join(dir, 'voice.mp3'), Buffer.from([0xff, 0xfb, 0x90, 0x00]));
+    await writeFile(join(dir, 'clip.mp4'), Buffer.from([0x00, 0x00, 0x00, 0x18]));
     const config = {
-      connections: [normalizeConnection({ name: 'Local', baseURL: 'http://127.0.0.1:11434/v1', model: 'm' })],
+      connections: [normalizeConnection({ name: 'Local', baseURL: 'http://127.0.0.1:11434/v1', model: 'm', audio: true, video: true })],
       defaultId: 'local',
     };
     let captured;
@@ -184,10 +267,11 @@ test('the ask_model tool runs one chat call with attachments', async () => {
       fetchImpl,
     });
     assert.equal(tool.name, 'ask_model');
+    assert.match(tool.description, /audio/u);
     const value = await tool.execute(
       {
         prompt: 'What is in the image?',
-        attachments: [{ path: 'shot.png' }, { path: 'doc.txt' }],
+        attachments: [{ path: 'shot.png' }, { path: 'doc.txt' }, { path: 'voice.mp3' }, { path: 'clip.mp4' }],
         max_tokens: 64,
         temperature: 0.1,
       },
@@ -196,7 +280,7 @@ test('the ask_model tool runs one chat call with attachments', async () => {
     assert.equal(value.answer, 'the answer');
     assert.equal(value.connection, 'local');
     assert.equal(value.model, 'm');
-    assert.deepEqual(value.attachments.map((row) => row.kind), ['image', 'text']);
+    assert.deepEqual(value.attachments.map((row) => row.kind), ['image', 'text', 'audio', 'video']);
     assert.equal(captured.init.headers.authorization, 'Bearer k');
     const body = JSON.parse(captured.init.body);
     assert.equal(body.max_tokens, 64);
@@ -206,10 +290,24 @@ test('the ask_model tool runs one chat call with attachments', async () => {
     assert.match(body.messages[0].content[0].text, /some text/u);
     assert.equal(body.messages[0].content[1].type, 'image_url');
     assert.match(body.messages[0].content[1].image_url.url, /^data:image\/png;base64,/u);
+    assert.equal(body.messages[0].content[2].type, 'input_audio');
+    assert.equal(body.messages[0].content[2].input_audio.format, 'mp3');
+    assert.equal(body.messages[0].content[3].type, 'video_url');
+    assert.match(body.messages[0].content[3].video_url.url, /^data:video\/mp4;base64,/u);
     assert.match(tool.output.render({}, value)[0].text, /^the answer\n\n\(local · m · \d+ ms\)$/u);
 
     await assert.rejects(tool.execute({ prompt: '  ' }, {}), /non-empty prompt/u);
     await assert.rejects(tool.execute({ prompt: 'x', connection: 'missing' }, {}), /unknown connection/u);
+
+    const noMedia = createAskModelTool({
+      getConfig: () => ({ connections: [normalizeConnection({ name: 'Text only', baseURL: 'http://127.0.0.1:11434/v1', model: 'm' })], defaultId: 'text-only' }),
+      resolveApiKey: async () => undefined,
+      fetchImpl,
+    });
+    await assert.rejects(
+      noMedia.execute({ prompt: 'listen', attachments: [{ path: 'voice.mp3' }] }, { agent: { session: { header: { cwd: dir } } } }),
+      /does not accept audio/u,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

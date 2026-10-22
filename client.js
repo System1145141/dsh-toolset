@@ -106,7 +106,7 @@ window.__ModuleLoader__.load({
       'prompt.defaultName': '{base} (tuned)',
       'prompt.baseMissing': 'The base preset list is empty.',
       'feature.askModel.title': 'Ask a model',
-      'feature.askModel.description': 'Adds the ask_model tool: the Agent can ask a separate chat model (local or cloud) a question and attach files or images. Configure the connections below; the small model is a plain chat, not an Agent.',
+      'feature.askModel.description': 'Adds the ask_model tool: the Agent can ask a separate chat model (local or cloud) a question and attach files, images, audio or video. Configure the connections below; the small model is a plain chat, not an Agent.',
       'ask.title': 'Ask a model',
       'ask.intro': 'Configure local or cloud OpenAI-compatible chat endpoints. The ask_model tool calls one of them directly: a plain chat completion with no tools, no agent loop, and no session. API keys are stored in the Host credential store, never in the plugin state.',
       'ask.empty': 'No connection configured yet.',
@@ -136,6 +136,12 @@ window.__ModuleLoader__.load({
       'ask.maxTokens': 'Max tokens (optional)',
       'ask.temperature': 'Temperature (optional)',
       'ask.vision': 'The model accepts images',
+      'ask.audio': 'The model accepts audio',
+      'ask.video': 'The model accepts video',
+      'ask.mediaHint': 'Audio is sent as input_audio (wav/mp3; other formats are converted with ffmpeg). Video is sent as video_url (local files become data URLs). Only enable what the endpoint really accepts.',
+      'ask.capImage': 'images',
+      'ask.capAudio': 'audio',
+      'ask.capVideo': 'video',
       'ask.save': 'Save connection',
       'ask.saving': 'Saving…',
       'ask.cancel': 'Cancel',
@@ -220,7 +226,7 @@ window.__ModuleLoader__.load({
       'prompt.defaultName': '{base}（微调）',
       'prompt.baseMissing': '基础预设列表为空。',
       'feature.askModel.title': '向模型提问',
-      'feature.askModel.description': '提供 ask_model 工具：Agent 可以向另一个聊天模型（本地或云端）提问，并携带文件或图片附件。在下方配置连接；小模型是纯聊天，不是 Agent。',
+      'feature.askModel.description': '提供 ask_model 工具：Agent 可以向另一个聊天模型（本地或云端）提问，并携带文件、图片、音频或视频附件。在下方配置连接；小模型是纯聊天，不是 Agent。',
       'ask.title': '向模型提问',
       'ask.intro': '配置本地或云端的 OpenAI 兼容聊天接口。ask_model 工具会直接调用其中一个：一次纯聊天补全，没有工具、没有智能体循环、不写入会话。API Key 保存在 Host 的凭据库中，不会写进插件状态文件。',
       'ask.empty': '还没有配置连接。',
@@ -250,6 +256,12 @@ window.__ModuleLoader__.load({
       'ask.maxTokens': '最大 tokens（可选）',
       'ask.temperature': '温度（可选）',
       'ask.vision': '该模型支持图片',
+      'ask.audio': '该模型支持音频',
+      'ask.video': '该模型支持视频',
+      'ask.mediaHint': '音频以 input_audio 发送（wav/mp3；其他格式用 ffmpeg 转换）。视频以 video_url 发送（本地文件会转成 data URL）。只勾选该接口真正支持的类型。',
+      'ask.capImage': '图片',
+      'ask.capAudio': '音频',
+      'ask.capVideo': '视频',
       'ask.save': '保存连接',
       'ask.saving': '保存中…',
       'ask.cancel': '取消',
@@ -548,6 +560,7 @@ window.__ModuleLoader__.load({
 .${PREFIX}-badgeDefault{background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-switch-thumb,#fff)}
 .${PREFIX}-formGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .${PREFIX}-formGrid > .full{grid-column:1/-1}
+.${PREFIX}-checks{display:flex;flex-wrap:wrap;gap:6px 18px}
 @media (max-width:560px){.${PREFIX}-formGrid{grid-template-columns:1fr}}
 @media (hover:hover){[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]) .${PREFIX}-userActions{opacity:0;transition:opacity 80ms}[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]):hover .${PREFIX}-userActions,[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]):focus-within .${PREFIX}-userActions{opacity:1}}
 @media (prefers-reduced-motion:reduce){.${PREFIX}-switch,.${PREFIX}-thumb{transition:none}.${PREFIX}-status[data-running="true"] .${PREFIX}-dot{animation:none}[data-chat-flow-kind="user"]:has(~ [data-chat-flow-kind="user"]) .${PREFIX}-userActions{transition:none}}
@@ -772,6 +785,8 @@ window.__ModuleLoader__.load({
         model: '',
         apiKey: '',
         vision: true,
+        audio: false,
+        video: false,
         timeoutMs: '120000',
         maxTokens: '',
         temperature: '',
@@ -844,6 +859,8 @@ window.__ModuleLoader__.load({
           model: row.model,
           apiKey: '',
           vision: row.vision !== false,
+          audio: row.audio === true,
+          video: row.video === true,
           timeoutMs: String(row.timeoutMs ?? 120000),
           maxTokens: row.maxTokens === undefined ? '' : String(row.maxTokens),
           temperature: row.temperature === undefined ? '' : String(row.temperature),
@@ -861,6 +878,8 @@ window.__ModuleLoader__.load({
             baseURL: form.baseURL.trim(),
             model: form.model.trim(),
             vision: form.vision,
+            audio: form.audio,
+            video: form.video,
             timeoutMs: Number(form.timeoutMs),
           };
           if (editingId !== '') payload.id = editingId;
@@ -995,6 +1014,9 @@ window.__ModuleLoader__.load({
                     row.name,
                     row.id === roster.defaultId ? h('span', { className: `${PREFIX}-badge ${PREFIX}-badgeDefault` }, t('ask.defaultBadge')) : null,
                     row.local === true ? h('span', { className: `${PREFIX}-badge` }, t('ask.localBadge')) : null,
+                    row.vision !== false ? h('span', { className: `${PREFIX}-badge` }, t('ask.capImage')) : null,
+                    row.audio === true ? h('span', { className: `${PREFIX}-badge` }, t('ask.capAudio')) : null,
+                    row.video === true ? h('span', { className: `${PREFIX}-badge` }, t('ask.capVideo')) : null,
                     h('span', { className: `${PREFIX}-badge` }, row.apiKeySet === true ? t('ask.keySet') : t('ask.keyMissing')),
                   ),
                   h('div', { className: `${PREFIX}-connMeta` }, `${row.model} · ${row.baseURL}`),
@@ -1134,11 +1156,28 @@ window.__ModuleLoader__.load({
               }),
             ),
             h(
-              'label',
-              { className: `${PREFIX}-check full` },
-              h('input', { type: 'checkbox', checked: form.vision, disabled: busy, onChange: (event) => setField('vision', event.target.checked) }),
-              h('span', null, t('ask.vision')),
+              'div',
+              { className: `${PREFIX}-checks full` },
+              h(
+                'label',
+                { className: `${PREFIX}-check` },
+                h('input', { type: 'checkbox', checked: form.vision, disabled: busy, onChange: (event) => setField('vision', event.target.checked) }),
+                h('span', null, t('ask.vision')),
+              ),
+              h(
+                'label',
+                { className: `${PREFIX}-check` },
+                h('input', { type: 'checkbox', checked: form.audio, disabled: busy, onChange: (event) => setField('audio', event.target.checked) }),
+                h('span', null, t('ask.audio')),
+              ),
+              h(
+                'label',
+                { className: `${PREFIX}-check` },
+                h('input', { type: 'checkbox', checked: form.video, disabled: busy, onChange: (event) => setField('video', event.target.checked) }),
+                h('span', null, t('ask.video')),
+              ),
             ),
+            h('div', { className: `${PREFIX}-note full` }, t('ask.mediaHint')),
           ),
           h(
             'div',

@@ -13,7 +13,7 @@ features, each with an independent switch under **Settings → Toolset**.
 | `safe-restart` | The `dsh_safe_restart` tool: restarts the Desktop app after the Host is idle, then resumes the session and continues automatically | on |
 | `rewind` | A rewind action beside Copy on every user message: continue from before that message in a new branch (workspace unchanged; the original session is archived and restorable) | on |
 | `prompt-tuning` | Settings editor that starts from an existing Agent preset, edits its initial system prompt and saves the result as a new preset (live, no restart) | on |
-| `ask-model` | The `ask_model` tool plus a Settings editor for local/cloud OpenAI-compatible chat connections; the Agent can ask that chat model with file and image attachments | on |
+| `ask-model` | The `ask_model` tool plus a Settings editor for local/cloud OpenAI-compatible chat connections; the Agent can ask that chat model with file, image, audio and video attachments | on |
 
 ## Layout
 
@@ -23,7 +23,7 @@ features, each with an independent switch under **Settings → Toolset**.
 | `client.js` | Client entry: Settings → Toolset switch page + prompt-tuning editor, request-status pill, user-message rewind action |
 | `lib/features.js` | Feature ids and defaults |
 | `lib/prompt-tuning.js` | Agent-preset persona editing, profile-patch declaration, live HMR apply/rollback |
-| `lib/ask-model.js` | `ask_model` tool, OpenAI-compatible chat client, attachment loading, connection validation |
+| `lib/ask-model.js` | `ask_model` tool, OpenAI-compatible chat client, image/audio/video attachment loading, connection validation |
 | `lib/tool.js` | `dsh_safe_restart` tool definition |
 | `lib/restart.js` | Idle-gated restart scheduler, armed request marker, detached helper launch |
 | `lib/resume.js` | Post-restart session resume + continuation message |
@@ -132,7 +132,8 @@ the preset is written and the result reports `restartRequired`.
 **Settings → Toolset → Ask a model** manages any number of OpenAI-compatible
 chat endpoints — local (Ollama, LM Studio, llama.cpp, vLLM) or cloud (OpenAI,
 DeepSeek, OpenRouter, …). Each connection has a name, base URL, model, optional
-API key, optional token/temperature caps, and a "supports images" flag. The
+API key, optional token/temperature caps, and three capability flags — images,
+audio and video — that gate which attachments may be sent to it. The
 saved key goes to the Host credential store under
 `DSH_TOOLSET_ASK_MODEL_<ID>`; it is never written to `state.json` and never
 returned to the client. The **Test** button sends one tiny request and reports
@@ -145,15 +146,19 @@ The feature adds the `ask_model` tool:
 | `prompt` (required) | the question or instruction |
 | `system` | optional system instruction for this one request |
 | `connection` | connection id or display name; omit for the default |
-| `attachments` | `{path}` for a workspace file (image → image part, text → inlined) or `{url}` for an http(s) image |
+| `attachments` | `{path}` for a workspace file (image → image part, audio → `input_audio`, video → `video_url`, text → inlined), `{url}` for an http(s) image/video, or `{kind}` to force a media kind for extensionless files |
 | `max_tokens`, `temperature` | optional per-call overrides |
 
 It performs exactly one `/chat/completions` request: no tools, no agent loop,
 no session writes. Images become `image_url` parts (base64 data URLs for local
-files); text files are wrapped in `<attachment>` blocks. Attachments are capped
-at 10 MiB each and 20 per call; text is truncated at 512 KiB. The tool's
-description lists the configured connections, so it is re-registered whenever
-the registry changes.
+files), audio becomes `input_audio` (wav/mp3 pass through; m4a, aac, ogg, opus,
+flac, amr, wma and weba are converted to mono 16 kHz mp3 with ffmpeg when it is
+available), and video becomes `video_url` (local files become base64 data
+URLs). Text files are wrapped in `<attachment>` blocks. Attachments are capped
+at 10 MiB each and 20 per call; text is truncated at 512 KiB. A media
+attachment is rejected unless the chosen connection has that capability
+enabled. The tool's description lists the configured connections and their
+capabilities, so it is re-registered whenever the registry changes.
 
 ## Install
 
@@ -176,7 +181,9 @@ left untouched.
 
 Ask-model connections live in `state.json`; their API keys live in the Host
 credential store (`.credentials.yaml`) and are removed when the connection is
-deleted. Connections without a key work as-is for local servers.
+deleted. Connections without a key work as-is for local servers. Converting
+non-wav/mp3 audio needs `ffmpeg` on `PATH` (or `DSH_TOOLSET_FFMPEG` pointing at
+the binary); wav and mp3 work without it.
 
 ## Development
 
