@@ -12,7 +12,7 @@ features, each with an independent switch under **Settings → Toolset**.
 | `request-status` | Live session status under the composer: 就绪 / 错误 / 进行中·请求 / 等待回复 / 思考 / 等待工具 / 输出 | on |
 | `safe-restart` | The `dsh_safe_restart` tool: restarts the Desktop app after the Host is idle, then resumes the session and continues automatically | on |
 | `rewind` | A rewind action beside Copy on every user message: continue from before that message in a new branch (workspace unchanged; the original session is archived and restorable) | on |
-| `prompt-tuning` | Settings editor that starts from an existing Agent preset, edits its initial system prompt and saves the result as a new preset (live, no restart) | on |
+| `prompt-tuning` | Settings editor that starts from an existing Agent preset, edits its opening identity line and initial system prompt, and saves the result as a new preset (live, no restart) | on |
 | `ask-model` | The `ask_model` tool plus a Settings editor for local/cloud OpenAI-compatible chat connections; the Agent can ask that chat model with file, image, audio and video attachments | on |
 
 ## Layout
@@ -22,7 +22,8 @@ features, each with an independent switch under **Settings → Toolset**.
 | `index.js` | Host entry: feature API, feature-gated Host features, post-restart resume pass |
 | `client.js` | Client entry: Settings → Toolset switch page + prompt-tuning editor, request-status pill, user-message rewind action |
 | `lib/features.js` | Feature ids and defaults |
-| `lib/prompt-tuning.js` | Agent-preset persona editing, profile-patch declaration, live HMR apply/rollback |
+| `lib/prompt-tuning.js` | Agent-preset persona/identity editing, profile-patch declaration, live HMR apply/rollback |
+| `lib/preset-identity.js` | Preset-mountable row that shadows DSH's fixed `harness:identity` system-prompt line |
 | `lib/ask-model.js` | `ask_model` tool, OpenAI-compatible chat client, image/audio/video attachment loading, connection validation |
 | `lib/tool.js` | `dsh_safe_restart` tool definition |
 | `lib/restart.js` | Idle-gated restart scheduler, armed request marker, detached helper launch |
@@ -110,20 +111,30 @@ preset:
    persona paragraph at the very top of the system prompt — and lets you edit
    it; an optional switch makes the edited text the *complete* system prompt
    (DSH's fixed guidance and tool descriptions are then suppressed);
-3. **Save as new preset** declares a new `@deepseek-ai/dsh-agent-preset` Loader
+3. the **opening identity line** field edits the fixed first sentence DSH
+   renders above the persona (`You are an AI agent powered by DeepSeek
+   Harness.`). Replace it, clear it to remove the line, or leave the default to
+   keep DSH's own wording. This works because the preset mounts a small row
+   (`@local/dsh-toolset/preset-identity`) that registers the same
+   `harness:identity` prompt section in the agent's scope, and the registry
+   lets the nearest scope shadow the global one; the deployment default is
+   never edited;
+4. **Save as new preset** declares a new `@deepseek-ai/dsh-agent-preset` Loader
    row in the profile patch (`cordis.patch.yml`), reusing the base preset's
-   whole child plugin list with only the persona row replaced, then asks HMR to
-   recompose the profile. The new preset appears in **Settings → Agent presets**
-   and can be chosen for new sessions — no restart;
-4. presets created this way are listed under the editor and can be edited
+   whole child plugin list with only the persona (and identity) rows replaced,
+   then asks HMR to recompose the profile. The new preset appears in
+   **Settings → Agent presets** and can be chosen for new sessions — no restart;
+5. presets created this way are listed under the editor and can be edited
    (updated in place) or deleted. The base preset is never modified, and
    sessions that already started keep the composition they were created with.
 
 The Host half reads the base plugin list through the registry's own
 `readDocument` YAML (so `!!js` conditions survive), performs only textual
-surgery on the persona row, validates the resulting patch by recomposing, and
-rolls the profile patch back if the new preset fails to activate. Without HMR
-the preset is written and the result reports `restartRequired`.
+surgery on the persona and identity rows, validates the resulting patch by
+recomposing, and rolls the profile patch back if the new preset fails to
+activate. When HMR cannot publish the change live (no HMR, or a recomposition
+that itself waits for a restart) the preset stays on disk and the result
+reports `restartRequired` instead of being discarded.
 
 ## Feature 5: ask a model
 

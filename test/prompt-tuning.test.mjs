@@ -10,9 +10,12 @@ import {
   buildPresetPatchBlock,
   composePluginsYaml,
   createPromptTuning,
+  DEFAULT_IDENTITY,
   derivePresetId,
   listManagedPresets,
   managedMarker,
+  normalizeIdentity,
+  parseIdentity,
   parsePersona,
   removeManagedBlock,
   stripPersonaRow,
@@ -172,6 +175,95 @@ test('patch blocks round-trip through append/remove/list', () => {
 
   assert.equal(removeManagedBlock(removed.text, 'missing').removed, false);
   assert.equal(managedMarker('alpha'), '# dsh-toolset preset: alpha (managed by Settings -> Toolset)');
+});
+
+test('the identity row shadows the fixed opening line', () => {
+  assert.equal(DEFAULT_IDENTITY, 'You are an AI agent powered by DeepSeek Harness.');
+  const withIdentity = composePluginsYaml(
+    STANDARD_PLUGINS,
+    { prefix: 'Be terse.', complete: false, includeRuntimeContext: true },
+    { text: 'You are a terse systems engineer.' },
+  );
+  assert.match(withIdentity, /^- id: preset-identity\n  name: '@local\/dsh-toolset\/preset-identity'\n  config:\n    text: \|-\n      You are a terse systems engineer\.\n- id: persona/u);
+  assert.deepEqual(parseIdentity(withIdentity), { found: true, text: 'You are a terse systems engineer.' });
+
+  const hidden = composePluginsYaml(STANDARD_PLUGINS, { prefix: 'X' }, { text: '' });
+  assert.match(hidden, /text: ''/u);
+  assert.deepEqual(parseIdentity(hidden), { found: true, text: '' });
+
+  // Omitting the override leaves no row at all.
+  const plain = composePluginsYaml(STANDARD_PLUGINS, { prefix: 'X' });
+  assert.doesNotMatch(plain, /preset-identity/u);
+  assert.deepEqual(parseIdentity(plain), { found: false, text: '' });
+
+  // Re-composing keeps exactly one identity row (idempotent).
+  const again = composePluginsYaml(withIdentity, { prefix: 'Still terse.' }, { text: 'You are a terse systems engineer.' });
+  assert.equal((again.match(/'@local\/dsh-toolset\/preset-identity'/gu) ?? []).length, 1);
+  assert.deepEqual(parseIdentity(again), { found: true, text: 'You are a terse systems engineer.' });
+
+  // A base preset that already carries the row is replaced, not duplicated.
+  const fromBase = composePluginsYaml(withIdentity, { prefix: 'Y' }, { text: 'Changed.' });
+  assert.deepEqual(parseIdentity(fromBase), { found: true, text: 'Changed.' });
+  assert.equal((fromBase.match(/'@local\/dsh-toolset\/preset-identity'/gu) ?? []).length, 1);
+
+  assert.equal(normalizeIdentity('  padded  '), 'padded');
+  assert.equal(normalizeIdentity(''), '');
+  assert.throws(() => normalizeIdentity('x'.repeat(2001)), /2000 characters/u);
+});
+
+test('controller exposes and saves the identity override', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-toolset-id-'));
+  const patchPath = join(dir, 'cordis.patch.yml');
+  await writeFile(patchPath, "- id: web\n  name: '@deepseek-ai/dsh-web'\n", 'utf8');
+  const definitions = new Map([['standard', { id: 'standard', name: 'Standard', plugins: STANDARD_PLUGINS }]]);
+  const agentPresets = {
+    async list() {
+      return [...definitions.values()].map((definition) => ({ id: definition.id, name: definition.name }));
+    },
+    async readDocument(id) {
+      const definition = definitions.get(id);
+      if (definition === undefined) throw new Error(`unknown preset ${id}`);
+      return { agentPreset: id, name: definition.name, content: definition.plugins };
+    },
+  };
+  const hmr = {
+    runExclusive: (operation) => operation(),
+    async reconcileProfile() {
+      const text = await readFile(patchPath, 'utf8');
+      for (const id of listManagedPresets(text)) {
+        const start = text.indexOf(managedMarker(id));
+        const pluginsStart = text.indexOf('        plugins:\n', start);
+        const plugins = text.slice(pluginsStart + '        plugins:\n'.length).split('\n').filter((line) => line.startsWith('          ')).map((line) => line.slice(10)).join('\n');
+        definitions.set(id, { id, name: id, plugins });
+      }
+      return { warnings: [] };
+    },
+  };
+  const tuning = createPromptTuning({ agentPresets, patchPath, hmr });
+  try {
+    const info = await tuning.base('standard');
+    assert.equal(info.identity, DEFAULT_IDENTITY);
+    assert.equal(info.overridesIdentity, false);
+
+    const saved = await tuning.save({ basePreset: 'standard', name: 'Tuned', prompt: 'Be terse.', identity: 'You are a helpful research assistant.' });
+    assert.equal(saved.id, 'tuned');
+    assert.equal(parseIdentity(definitions.get('tuned').plugins).text, 'You are a helpful research assistant.');
+
+    const savedInfo = await tuning.base('tuned');
+    assert.equal(savedInfo.overridesIdentity, true);
+    assert.equal(savedInfo.identity, 'You are a helpful research assistant.');
+
+    // Saving the deployment default again drops the override row.
+    await tuning.save({ basePreset: 'tuned', presetId: 'tuned', name: 'Tuned', prompt: 'Be terse.', identity: DEFAULT_IDENTITY });
+    assert.equal(parseIdentity(definitions.get('tuned').plugins).found, false);
+
+    // Omitting identity preserves the base preset's state.
+    await tuning.save({ basePreset: 'tuned', presetId: 'tuned', name: 'Tuned', prompt: 'Be even terser.', identity: 'Custom.' });
+    await tuning.save({ basePreset: 'tuned', presetId: 'tuned', name: 'Tuned', prompt: 'Third.' });
+    assert.equal(parseIdentity(definitions.get('tuned').plugins).text, 'Custom.');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('managed blocks keep blank lines inside block scalars when removed', () => {
