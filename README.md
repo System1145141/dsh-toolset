@@ -1,7 +1,8 @@
 # dsh-toolset
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that bundles several small
-features, each with an independent switch under **Settings → Toolset**.
+features, each with an independent switch under **Settings → Toolset**, and ships the
+**PTC + 创造 (PTC + Creator)** Agent preset.
 
 ![Request status pill in the composer status line](docs/status-line.png)
 
@@ -14,6 +15,31 @@ features, each with an independent switch under **Settings → Toolset**.
 | `rewind` | A rewind action beside Copy on every user message: continue from before that message in a new branch (workspace unchanged; the original session is archived and restorable) | on |
 | `prompt-tuning` | Settings editor that starts from an existing Agent preset, edits its opening identity line and initial system prompt, and saves the result as a new preset (live, no restart) | on |
 | `ask-model` | The `ask_model` tool plus a Settings editor for local/cloud OpenAI-compatible chat connections; the Agent can ask that chat model with file, image, audio and video attachments | on |
+
+## Bundled preset: PTC + 创造
+
+The plugin patch also declares one `@deepseek-ai/dsh-agent-preset` row, `ptc-cordis`,
+so installing this single bundle gives you the preset as well:
+
+| Combination | Rows |
+| --- | --- |
+| Creator mode | `tool-cordis` (runtime self-inspection) and `tool-plugin-manager` / `tool-plugin-market` (dynamic plugin mounting), plus the creator skills mounted through `skill-filesystem` from `@deepseek-ai/dsh-agent-preset/skills` |
+| PTC mode | `tool-presentation` with `mode: ptc`: the model writes one TypeScript program executed by `run_code` instead of calling tools one by one |
+| Hybrid | `workflow-ptc` / `tool-workflow` stay **enabled** (the shipped `ptc` preset disables them), because JS orchestration and PTC are complementary |
+
+Everything else matches the shipped `cordis` preset. It is inserted rather than
+overriding `preset-cordis`, so the four shipped presets stay intact and this one is an
+extra roster entry (order 5). Turn the whole preset off from a higher patch layer:
+
+```yaml
+- id: preset-ptc-cordis
+  name: '@deepseek-ai/dsh-agent-preset'
+  disabled: true
+```
+
+The patch is `cordis.patch.yml` in this package; `node qa/validate-bundle-patch.mjs`
+(developer-only) re-parses it and checks every row. New sessions pick it in
+**Settings → Agent presets** or from the new-task preset picker.
 
 ## Layout
 
@@ -29,6 +55,7 @@ features, each with an independent switch under **Settings → Toolset**.
 | `lib/restart.js` | Idle-gated restart scheduler, armed request marker, detached helper launch |
 | `lib/resume.js` | Post-restart session resume + continuation message |
 | `restart-helper.ps1` | Detached PowerShell helper that terminates the Electron tree and relaunches the app |
+| `cordis.patch.yml` | Bundle patch: the `dsh-toolset` plugin row plus the `preset-ptc-cordis` Agent-preset row |
 | `test/` | Dependency-free unit tests (`node --test`) |
 
 ## Feature 1: request status
