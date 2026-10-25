@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,6 +21,13 @@ import {
   removeManagedBlock,
   stripPersonaRow,
 } from '../lib/prompt-tuning.js';
+
+const dshRequire = createRequire('C:/1/Task/app-unpacked/dsh/node_modules/');
+const yaml = dshRequire('js-yaml');
+const { entryListSchema } = dshRequire('@deepseek-ai/cordis-plugin-include');
+
+/** Parse the Cordis entry-list dialect, the way the profile patch is read. */
+const loadEntryList = (text) => yaml.load(text, { schema: entryListSchema });
 
 const STANDARD_PLUGINS = `- id: persona
   name: '@deepseek-ai/dsh-persona'
@@ -54,6 +62,45 @@ test('derivePresetId sanitizes names and avoids collisions', () => {
   assert.equal(derivePresetId('standard', new Set(['standard'])), 'standard-2');
   assert.equal(derivePresetId('standard', new Set(['standard', 'standard-2'])), 'standard-3');
   assert.match(derivePresetId(''), /^custom-[a-z0-9]+$/u);
+});
+
+test('derivePresetId never returns a YAML number or an empty id', () => {
+  // Regression: "极简模式1" used to derive "1", which the patch wrote unquoted;
+  // YAML parsed the id as the number 1 and the preset row failed validation
+  // with `$.id expected string but got 1`.
+  for (const name of ['极简模式1', '标准模式1', '123', '型1', '1']) {
+    const id = derivePresetId(name);
+    assert.match(id, /^[a-z][a-z0-9-]*$/u, `${name} must derive a leading-letter id`);
+  }
+  assert.equal(derivePresetId('极简模式1'), 'custom-1');
+  assert.equal(derivePresetId('123'), 'custom-123');
+  // Deterministic for non-Latin names: no clock in the id.
+  assert.equal(derivePresetId('中文名字'), derivePresetId('中文名字'));
+});
+
+test('buildPresetPatchBlock always emits string scalars', () => {
+  const block = buildPresetPatchBlock({
+    presetId: 'custom-1',
+    rowId: 'preset-custom-1',
+    name: '极简模式1: 测试',
+    order: 50,
+    pluginsYaml: '- id: persona\n  name: x\n',
+  });
+  assert.match(block, /- id: "preset-custom-1"/u);
+  assert.match(block, /        id: "custom-1"/u);
+  const parsed = loadEntryList(block);
+  const row = parsed[0].insert[0];
+  assert.equal(row.id, 'preset-custom-1');
+  assert.equal(row.config.id, 'custom-1');
+  assert.equal(row.config.name, '极简模式1: 测试');
+  assert.equal(typeof row.id, 'string');
+  assert.equal(typeof row.config.id, 'string');
+
+  // Names that look like booleans, null or a mapping still round-trip literally.
+  for (const name of ['yes', 'null', '1', 'a: b', '#tag', '*alias', '&anchor', '%percent', '@at']) {
+    const roundTrip = loadEntryList(buildPresetPatchBlock({ presetId: 'x', rowId: 'preset-x', name, order: 50, pluginsYaml: '- id: persona\n  name: y\n' }));
+    assert.equal(roundTrip[0].insert[0].config.name, name, `name ${JSON.stringify(name)} must survive YAML`);
+  }
 });
 
 test('parsePersona reads plain, quoted, block and folded prefixes', () => {
@@ -156,7 +203,7 @@ test('patch blocks round-trip through append/remove/list', () => {
     order: 50,
     pluginsYaml: STANDARD_PLUGINS,
   });
-  assert.match(blockA, /^# dsh-toolset preset: alpha \(managed by Settings -> Toolset\)\n- insert:\n    - id: preset-alpha\n      name: '@deepseek-ai\/dsh-agent-preset'\n      config:\n        id: alpha\n        name: "Alpha \\"quoted\\""\n        description: "Created by dsh-toolset\."\n        order: 50\n        plugins:\n          - id: persona\n            name: '@deepseek-ai\/dsh-persona'/u);
+  assert.match(blockA, /^# dsh-toolset preset: alpha \(managed by Settings -> Toolset\)\n- insert:\n    - id: "preset-alpha"\n      name: '@deepseek-ai\/dsh-agent-preset'\n      config:\n        id: "alpha"\n        name: "Alpha \\"quoted\\""\n        description: "Created by dsh-toolset\."\n        order: 50\n        plugins:\n          - id: persona\n            name: '@deepseek-ai\/dsh-persona'/u);
 
   const base = '- id: web\n  name: \'@deepseek-ai/dsh-web\'\n';
   let text = appendManagedBlock(base, blockA);

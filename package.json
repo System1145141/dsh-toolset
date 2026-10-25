@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-toolset",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "DeepSeek Harness toolset: several small, independently switchable features, plus the PTC + Creator agent preset. Features: live request status; dsh_safe_restart with automatic session resume; rewind-to-message with a branch and archived original; system-prompt tuning that saves an edited prompt as a new Agent preset; ask_model, which lets the Agent consult a configured local or cloud chat model (with file, image, audio and video attachments).",
   "license": "MIT",
