@@ -10,14 +10,19 @@ import {
   buildMessages,
   chatCompletion,
   createAskModelTool,
+  defaultMaxTokens,
   deriveConnectionId,
   endpointFor,
   isLocalEndpoint,
+  isReasoningEffort,
   loadAttachments,
   normalizeAskModelState,
   normalizeConnection,
+  REASONING_EFFORTS,
+  REASONING_MIN_MAX_TOKENS,
   resolveConnection,
   resolveFfmpeg,
+  resolveMaxTokens,
   secretRefFor,
   transcodeAudioToMp3,
 } from '../lib/ask-model.js';
@@ -294,7 +299,7 @@ test('the ask_model tool runs one chat call with attachments', async () => {
     assert.equal(body.messages[0].content[2].input_audio.format, 'mp3');
     assert.equal(body.messages[0].content[3].type, 'video_url');
     assert.match(body.messages[0].content[3].video_url.url, /^data:video\/mp4;base64,/u);
-    assert.match(tool.output.render({}, value)[0].text, /^the answer\n\n\(local · m · \d+ ms\)$/u);
+    assert.match(tool.output.render({}, value)[0].text, /^the answer\n\n\(local · m · max_tokens 64 · \d+ ms\)$/u);
 
     await assert.rejects(tool.execute({ prompt: '  ' }, {}), /non-empty prompt/u);
     await assert.rejects(tool.execute({ prompt: 'x', connection: 'missing' }, {}), /unknown connection/u);
@@ -311,6 +316,123 @@ test('the ask_model tool runs one chat call with attachments', async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('connections accept a reasoning level and reject unknown ones', () => {
+  assert.deepEqual(REASONING_EFFORTS, ['off', 'low', 'medium', 'high']);
+  assert.equal(REASONING_MIN_MAX_TOKENS, 5000);
+  const plain = normalizeConnection({ name: 'Plain', baseURL: 'http://127.0.0.1:11434/v1', model: 'm' });
+  assert.equal('reasoning' in plain, false, 'omitted by default, so the endpoint decides');
+  const thinking = normalizeConnection({ name: 'Thinker', baseURL: 'http://127.0.0.1:11434/v1', model: 'm', reasoning: 'high' });
+  assert.equal(thinking.reasoning, 'high');
+  assert.throws(() => normalizeConnection({ name: 'x', baseURL: 'http://x/v1', model: 'm', reasoning: 'max' }), /reasoning must be one of/u);
+  assert.equal(isReasoningEffort('off'), true);
+  assert.equal(isReasoningEffort('HIGH'), false);
+});
+
+test('reasoning calls keep a 5000-token output floor', () => {
+  const thinker = normalizeConnection({ name: 'Thinker', baseURL: 'http://x/v1', model: 'm', reasoning: 'medium' });
+  const plain = normalizeConnection({ name: 'Plain', baseURL: 'http://x/v1', model: 'm' });
+
+  // A reasoning connection sends the floor even when the caller names no cap.
+  assert.equal(defaultMaxTokens(thinker), 5000);
+  assert.equal(defaultMaxTokens(plain), undefined);
+  assert.equal(defaultMaxTokens({ reasoning: 'off' }), undefined);
+  assert.equal(defaultMaxTokens({ maxTokens: 2000, reasoning: 'high' }), 2000, 'an explicit connection cap wins');
+
+  // A per-call cap below the floor is raised for reasoning calls only.
+  assert.deepEqual(resolveMaxTokens({ requested: 512, reasoning: 'high', connection: thinker }), { maxTokens: 5000, raisedFrom: 512 });
+  assert.deepEqual(resolveMaxTokens({ requested: 512, reasoning: 'off', connection: thinker }), { maxTokens: 512 });
+  assert.deepEqual(resolveMaxTokens({ requested: 512, reasoning: undefined, connection: plain }), { maxTokens: 512 });
+  assert.deepEqual(resolveMaxTokens({ requested: 8000, reasoning: 'high', connection: thinker }), { maxTokens: 8000 });
+  assert.deepEqual(resolveMaxTokens({ requested: undefined, reasoning: 'high', connection: { maxTokens: 12000 } }), { maxTokens: 12000 });
+  assert.deepEqual(resolveMaxTokens({ requested: 5000, reasoning: 'high', connection: plain }), { maxTokens: 5000 });
+});
+
+test('chatCompletion sends reasoning_effort and the floor', async () => {
+  const thinker = normalizeConnection({ name: 'Thinker', baseURL: 'http://127.0.0.1:11434/v1', model: 'm', reasoning: 'high' });
+  const bodies = [];
+  const fetchImpl = async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+  };
+  const answer = await chatCompletion({ connection: thinker, messages: [{ role: 'user', content: 'hi' }], fetchImpl });
+  assert.equal(answer.text, 'ok');
+  assert.deepEqual(bodies[0], { model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: false, max_tokens: 5000, reasoning_effort: 'high' });
+
+  await chatCompletion({
+    connection: thinker,
+    messages: [{ role: 'user', content: 'hi' }],
+    reasoning: 'off',
+    maxTokens: 256,
+    fetchImpl,
+  });
+  assert.equal(bodies[1].reasoning_effort, undefined, '"off" omits the field');
+  assert.equal(bodies[1].max_tokens, 256, 'a non-reasoning call keeps its own cap');
+
+  await chatCompletion({
+    connection: normalizeConnection({ name: 'Plain', baseURL: 'http://127.0.0.1:11434/v1', model: 'm' }),
+    messages: [{ role: 'user', content: 'hi' }],
+    fetchImpl,
+  });
+  assert.equal(bodies[2].reasoning_effort, undefined);
+  assert.equal(bodies[2].max_tokens, undefined, 'a non-reasoning connection sends no cap when none is configured');
+});
+
+test('the ask_model tool takes a per-call reasoning level', async () => {
+  const thinker = normalizeConnection({ name: 'Thinker', baseURL: 'http://127.0.0.1:11434/v1', model: 'm', reasoning: 'low' });
+  const config = { connections: [thinker], defaultId: 'thinker' };
+  const bodies = [];
+  const fetchImpl = async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'the answer' } }], usage: { total_tokens: 4 } }), { status: 200 });
+  };
+  const tool = createAskModelTool({ getConfig: () => config, resolveApiKey: async () => undefined, fetchImpl });
+
+  const used = await tool.execute({ prompt: 'hello' }, {});
+  assert.equal(used.reasoning, 'low');
+  assert.equal(used.maxTokens, 5000);
+  assert.equal(bodies[0].reasoning_effort, 'low');
+  assert.equal(bodies[0].max_tokens, 5000);
+
+  const raised = await tool.execute({ prompt: 'hello', max_tokens: 300 }, {});
+  assert.equal(raised.reasoning, 'low');
+  assert.equal(raised.maxTokens, 5000);
+  assert.equal(raised.raisedFrom, 300);
+  assert.equal(bodies[1].max_tokens, 5000);
+
+  const bigger = await tool.execute({ prompt: 'hello', max_tokens: 9000 }, {});
+  assert.equal(bigger.maxTokens, 9000);
+  assert.equal(bodies[2].max_tokens, 9000);
+
+  const quiet = await tool.execute({ prompt: 'hello', reasoning: 'off', max_tokens: 300 }, {});
+  assert.equal(quiet.reasoning, 'off');
+  assert.equal(quiet.maxTokens, 300);
+  assert.equal(bodies[3].reasoning_effort, undefined);
+
+  await assert.rejects(tool.execute({ prompt: 'hello', reasoning: 'extreme' }, {}), /reasoning must be one of/u);
+
+  // The model-facing text carries the floor guidance and the per-connection level.
+  const description = buildAskModelDescription(config);
+  assert.match(description, /5000/u);
+  assert.match(description, /reasoning high|reasoning low/u);
+  assert.match(description, /"reasoning"/u);
+  assert.match(tool.parameters.properties.max_tokens.description, /5000/u);
+  assert.deepEqual(tool.parameters.properties.reasoning.enum, REASONING_EFFORTS);
+
+  // The rendered footer reports the effective reasoning level and token budget,
+  // so a caller (and the user) can see the floor was applied.
+  const footer = (row) => tool.output.render({}, row)[0].text;
+  const plainCall = { answer: 'a', connection: 'thinker', model: 'm', elapsedMs: 12 };
+  assert.equal(footer(plainCall), 'a\n\n(thinker · m · 12 ms)');
+  assert.equal(
+    footer({ ...plainCall, reasoning: 'high', maxTokens: 9000 }),
+    'a\n\n(thinker · m · reasoning high · max_tokens 9000 · 12 ms)',
+  );
+  assert.equal(
+    footer({ ...plainCall, reasoning: 'high', maxTokens: 5000, raisedFrom: 300 }),
+    'a\n\n(thinker · m · reasoning high · max_tokens 5000 (raised from 300) · 12 ms)',
+  );
 });
 
 test('normalizeAskModelState keeps valid entries and repairs the default', () => {

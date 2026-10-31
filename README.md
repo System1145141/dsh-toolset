@@ -167,11 +167,15 @@ reports `restartRequired` instead of being discarded.
 
 ![Ask a model in Settings → Toolset](docs/ask-model.png)
 
+![Reasoning effort and the 5000-token floor](docs/ask-model-reasoning.png)
+
 **Settings → Toolset → Ask a model** manages any number of OpenAI-compatible
 chat endpoints — local (Ollama, LM Studio, llama.cpp, vLLM) or cloud (OpenAI,
 DeepSeek, OpenRouter, …). Each connection has a name, base URL, model, optional
-API key, optional token/temperature caps, and three capability flags — images,
-audio and video — that gate which attachments may be sent to it. The
+API key, optional token/temperature caps, a **reasoning effort** setting
+(follow the endpoint's default, or fix `off` / `low` / `medium` / `high`), and
+three capability flags — images, audio and video — that gate which attachments
+may be sent to it. The
 saved key goes to the Host credential store under
 `DSH_TOOLSET_ASK_MODEL_<ID>`; it is never written to `state.json` and never
 returned to the client. The **Test** button sends one tiny request and reports
@@ -186,6 +190,17 @@ The feature adds the `ask_model` tool:
 | `connection` | connection id or display name; omit for the default |
 | `attachments` | `{path}` for a workspace file (image → image part, audio → `input_audio`, video → `video_url`, text → inlined), `{url}` for an http(s) image/video, or `{kind}` to force a media kind for extensionless files |
 | `max_tokens`, `temperature` | optional per-call overrides |
+| `reasoning` | optional per-call reasoning effort: `off` / `low` / `medium` / `high`; overrides the connection's own setting |
+
+Reasoning effort is sent as the OpenAI-compatible `reasoning_effort` field;
+`off` omits it so the endpoint applies its own default. A thinking model spends
+`max_tokens` on its reasoning **and** its answer together, so a small cap can be
+eaten entirely by the reasoning phase and return an empty answer. The tool
+therefore treats **5000 output tokens as the floor for reasoning calls**: a
+`max_tokens` below 5000 is raised to 5000 (the result reports `raisedFrom`), and
+a reasoning call with no cap at all gets 5000. Non-reasoning calls keep exactly
+the cap the caller passed. The tool description states this same rule to the
+model, so it sets `max_tokens` ≥ 5000 whenever it asks for reasoning.
 
 It performs exactly one `/chat/completions` request: no tools, no agent loop,
 no session writes. Images become `image_url` parts (base64 data URLs for local
